@@ -30,3 +30,12 @@
 *.exe
 *.out
 *.app
+
+# Visual Studio
+*.aps
+*.ilk
+*.pdb
+*.user
+/.vs
+/Bin
+/Intermediate

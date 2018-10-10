@@ -1,0 +1,77 @@
+; this file was created with wlalink by ville helin <vhelin@iki.fi>.
+; wla symbolic information for "acceptance/call_timing.gb".
+
+[labels]
+01:481f clear_vram
+01:4804 disable_lcd_safe
+01:480a _wait_ly_0
+01:4829 memcpy
+01:4832 memset
+01:4842 print_inline_string
+01:4813 print_load_font
+01:483b print_string
+01:47f0 reset_screen
+01:4000 font
+00:0151 _wait_ly_3
+00:0157 _wait_ly_4
+00:0184 test_finish
+00:0199 _wait_ly_5
+00:019f _wait_ly_6
+00:01b5 _print_results_halt_1
+00:01b9 _test_ok_cb_0
+00:01c7 wram_test
+00:01ca fail_round1
+00:01df _wait_ly_7
+00:01e5 _wait_ly_8
+00:01fb _print_results_halt_2
+00:01ff _test_failure_cb_0
+00:0213 fail_round2
+00:0228 _wait_ly_9
+00:022e _wait_ly_10
+00:0244 _print_results_halt_3
+00:0248 _test_failure_cb_1
+00:1f80 hiram_test
+00:1f87 _wait_ly_11
+00:1f8d _wait_ly_12
+00:1fa1 test_round2
+00:1fa8 _wait_ly_13
+00:1fae _wait_ly_14
+00:1fca finish_round1
+00:1ada finish_round2
+
+[definitions]
+0000000a _sizeof_clear_vram
+00000006 _sizeof_disable_lcd_safe
+00000009 _sizeof__wait_ly_0
+00000009 _sizeof_memcpy
+00000009 _sizeof_memset
+00000006 _sizeof_print_inline_string
+0000000c _sizeof_print_load_font
+00000007 _sizeof_print_string
+00000014 _sizeof_reset_screen
+000007f0 _sizeof_font
+00000006 _sizeof__wait_ly_3
+0000002d _sizeof__wait_ly_4
+00000015 _sizeof_test_finish
+00000006 _sizeof__wait_ly_5
+00000016 _sizeof__wait_ly_6
+00000004 _sizeof__print_results_halt_1
+0000000e _sizeof__test_ok_cb_0
+00000003 _sizeof_wram_test
+00000015 _sizeof_fail_round1
+00000006 _sizeof__wait_ly_7
+00000016 _sizeof__wait_ly_8
+00000004 _sizeof__print_results_halt_2
+00000014 _sizeof__test_failure_cb_0
+00000015 _sizeof_fail_round2
+00000006 _sizeof__wait_ly_9
+00000016 _sizeof__wait_ly_10
+00000004 _sizeof__print_results_halt_3
+00001892 _sizeof__test_failure_cb_1
+000004a6 _sizeof_finish_round2
+00000007 _sizeof_hiram_test
+00000006 _sizeof__wait_ly_11
+00000014 _sizeof__wait_ly_12
+00000007 _sizeof_test_round2
+00000006 _sizeof__wait_ly_13
+0000001c _sizeof__wait_ly_14

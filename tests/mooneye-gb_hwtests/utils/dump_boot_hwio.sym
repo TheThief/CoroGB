@@ -1,0 +1,17 @@
+; this file was created with wlalink by ville helin <vhelin@iki.fi>.
+; wla symbolic information for "utils/dump_boot_hwio.gb".
+
+[labels]
+01:486b clear_vram
+01:4839 disable_lcd_safe
+01:483f _wait_ly_0
+01:487f memcpy
+01:4888 memset
+01:4848 print_hex4
+01:4875 print_hex8
+01:4854 print_load_font
+01:4860 print_newline
+01:47f0 quit_dump_mem
+01:4800 quit_dump_mem@line
+01:4825 reset_screen
+01:4000 font
