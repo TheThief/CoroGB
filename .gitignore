@@ -39,3 +39,7 @@
 /.vs
 /Bin
 /Intermediate
+
+# Gameboy
+/tests/**/*.sav
+dmg_rom.bin
