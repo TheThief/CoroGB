@@ -21,10 +21,10 @@ namespace coro_gb
 		enum class unit : uint8_t
 		{
 			debug,
+			dma,
 			gpu,
 			cpu,
 			//serial,
-			//dma,
 			//sound,
 		};
 

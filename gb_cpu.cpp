@@ -42,14 +42,19 @@ namespace coro_gb
 	cpu_read16(var, cast, registers.PC); \
 	registers.PC += 2;
 
-	// 12 cycles due to combining the 4 cycles from adjusting the SP register with the 8 cycle write
+	// 8 cycles on first wait due to combining the 4 cycle internal delay from adjusting the SP register with the 4 cycle write
 #define cpu_push16(value) \
 	registers.SP -= 2; \
-	co_await cycles(cycle_scheduler::priority::write, 12); \
-	memory.write16(registers.SP, value);
+	co_await cycles(cycle_scheduler::priority::write, 8); \
+	memory.write8(registers.SP + 1, (value) >> 8); \
+	co_await cycles(cycle_scheduler::priority::write, 4); \
+	memory.write8(registers.SP, (value) & 0xFF);
 
-#define cpu_pop16(var, cast) \
-	cpu_read16(var, cast, registers.SP); \
+#define cpu_pop16(var) \
+	co_await cycles(cycle_scheduler::priority::read, 4); \
+	var = memory.read8(registers.SP); \
+	co_await cycles(cycle_scheduler::priority::read, 4); \
+	var |= (uint16_t)memory.read8(registers.SP + 1) << 8; \
 	registers.SP += 2;
 
 	single_future<void> cpu::run()
@@ -760,7 +765,7 @@ namespace coro_gb
 								co_await cycles(cycle_scheduler::priority::read, 4);
 								if (registers.F_Zero == ((opcode >> 3) & 0b1))
 								{
-									cpu_pop16(registers.PC, uint16_t);
+									cpu_pop16(registers.PC);
 									additional_cycles = 4;
 								}
 								continue;
@@ -772,7 +777,7 @@ namespace coro_gb
 								co_await cycles(cycle_scheduler::priority::read, 4);
 								if (registers.F_Carry == ((opcode >> 3) & 0b1))
 								{
-									cpu_pop16(registers.PC, uint16_t);
+									cpu_pop16(registers.PC);
 									additional_cycles = 4;
 								}
 								continue;
@@ -823,7 +828,8 @@ namespace coro_gb
 						case 0b001:
 							if ((opcode & 0b11001111) == 0b11000001) // pop
 							{
-								cpu_pop16(uint16_t value, uint16_t);
+								uint16_t value;
+								cpu_pop16(value);
 								switch ((opcode >> 4) & 0b11)
 								{
 									case 0:
@@ -845,14 +851,14 @@ namespace coro_gb
 
 							if (opcode == 0b11001001) // ret
 							{
-								cpu_pop16(registers.PC, uint16_t);
+								cpu_pop16(registers.PC);
 								additional_cycles = 4;
 								continue;
 							}
 
 							if (opcode == 0b11011001) // reti
 							{
-								cpu_pop16(registers.PC, uint16_t);
+								cpu_pop16(registers.PC);
 								registers.enable_interrupts = true;
 								registers.enable_interrupts_delay = true;
 								additional_cycles = 4;

@@ -14,10 +14,10 @@ namespace coro_gb
 		, memory{ memory }
 	{
 		// vram
-		memory.set_mapping({ 0x8000, 0x9FFF, [this](uint16_t address)->uint8_t { return on_vram_read(address); }, [this](uint16_t address, uint8_t value) { on_vram_write(address, value); } });
+		memory.set_mapping({ 0x8000, 0x9FFF, vram.data(), vram.data() });
 
 		//oam
-		memory.set_mapping({ 0xFE00, 0xFEA0, [this](uint16_t address)->uint8_t { return on_vram_read(address); }, [this](uint16_t address, uint8_t value) { on_vram_write(address, value); } });
+		memory.set_mapping({ 0xFE00, 0xFEA0, (uint8_t*)oam.data(), (uint8_t*)oam.data() });
 
 		// registers
 		memory.set_mapping({ 0xFF40, 0xFF4B, [this](uint16_t address)->uint8_t { return on_register_read(address); }, [this](uint16_t address, uint8_t value) { on_register_write(address, value); } });
@@ -81,6 +81,8 @@ namespace coro_gb
 
 	single_future<void> gpu::run()
 	{
+		dma_task = run_dma();
+
 		struct gpu_tranform_fifo_to_output
 		{
 			gpu::registers_t::palette bg_palette;
@@ -123,6 +125,7 @@ namespace coro_gb
 
 				// sort sprites
 				registers.lcd_stat.mode = registers_t::lcd_mode::oam_search;
+				memory.set_mapping({ 0xFE00, 0xFEA0, nullptr, nullptr }); // block access to oam
 				update_interrupt_flags();
 
 				std::vector<sprite_attributes> sprites;
@@ -148,6 +151,7 @@ namespace coro_gb
 
 				// draw line
 				registers.lcd_stat.mode = registers_t::lcd_mode::lcd_write;
+				memory.set_mapping({ 0x8000, 0x9FFF, nullptr, nullptr }); // block access to vram
 
 				const uint16_t tiledata_base_addr_low = registers.lcd_control.tiledata_select ? 0x0000 : 0x1000;
 				const uint16_t tiledata_base_addr_high = 0x0000;
@@ -422,18 +426,14 @@ namespace coro_gb
 					}
 				}
 
-				//uint8_t complete = 160 - x;
-				//std::transform(&fifo[0], &fifo[complete], &screen[y * 160 + x], gpu_tranform_fifo_to_output{ registers.background_palette, memory.obj_palette });
-				//std::copy_n(&fifo[complete], complete, &fifo[0]);
-				//fifo_count -= complete;
-				//x += complete;
-
 				co_await cycles(cycle_scheduler::priority::write, 172); //?
 
 				// h blank
 				registers.lcd_stat.mode = registers_t::lcd_mode::h_blank;
+				memory.set_mapping({ 0xFE00, 0xFEA0, (uint8_t*)oam.data(), (uint8_t*)oam.data() }); // restore access to oam
+				memory.set_mapping({ 0x8000, 0x9FFF, vram.data(), vram.data() });                   // restore access to vram
 				update_interrupt_flags();
-				//co_await cycles(cycle_scheduler::priority::write, 456 - 80 - 172); //?
+
 				co_await cycles(cycle_scheduler::priority::write, (line_start + 456) - scheduler.get_cycle_counter());
 			}
 
@@ -483,60 +483,6 @@ namespace coro_gb
 			update_interrupt_flags();
 			co_await interruptible_cycles(cycle_scheduler::priority::write, 400);
 		}
-	}
-
-	uint8_t gpu::on_vram_read(uint16_t address) const
-	{
-		if (address >= 0x8000 && address <= 0x9FFF)
-		{
-			if (registers.lcd_stat.mode != registers_t::lcd_mode::lcd_write)
-			{
-				return vram[address - 0x8000];
-			}
-			else
-			{
-				return 0xFF;
-			}
-		}
-
-		if (address >= 0xFE00 && address <= 0xFEA0)
-		{
-			if (registers.lcd_stat.mode <= registers_t::lcd_mode::v_blank)
-			{
-				return ((uint8_t*)&oam[0])[address - 0xFE00];
-			}
-			else
-			{
-				return 0xFF;
-			}
-		}
-
-		throw std::runtime_error("bad gpu vram address");
-	}
-
-	void gpu::on_vram_write(uint16_t address, uint8_t u8)
-	{
-		if (address >= 0x8000 && address <= 0x9FFF)
-		{
-			if (registers.lcd_stat.mode != registers_t::lcd_mode::lcd_write)
-			{
-				vram[address - 0x8000] = u8;
-			}
-
-			return;
-		}
-
-		if (address >= 0xFE00 && address <= 0xFEA0)
-		{
-			if (registers.lcd_stat.mode <= registers_t::lcd_mode::v_blank)
-			{
-				((uint8_t*)&oam[0])[address - 0xFE00] = u8;
-			}
-
-			return;
-		}
-
-		throw std::runtime_error("bad gpu vram address");
 	}
 
 	uint8_t gpu::on_register_read(uint16_t address) const
@@ -630,16 +576,7 @@ namespace coro_gb
 		else if (address == 0xFF46)
 		{
 			registers.dma_start = u8;
-			if (registers.dma_start >= 0xE0)
-			{
-				// trying to DMA from 0xE000-0xFFFF will actually read from 0xC000-0xDFFF (wram mirroring)
-				// but DMA'ing from 0xFE00 will actually read from 0xDE00 not sprite memory!
-				u8 -= 0x20;
-			}
-			for (uint8_t offset = 0; offset < 0xA0; ++offset)
-			{
-				((uint8_t*)&oam[0])[offset] = memory.read8(u8 * 0x100 + offset);
-			}
+			interrupts.dma_trigger.trigger();
 			return;
 		}
 		else if (address == 0xFF47)
@@ -715,5 +652,43 @@ namespace coro_gb
 				memory.interrupts.cpu_wake.trigger();
 			}
 		}
+	}
+
+	single_future<void> gpu::run_dma()
+	{
+		while (true)
+		{
+			interrupts.dma_trigger.reset();
+			co_await interrupts.dma_trigger;
+
+			bool was_interrupted = false;
+			uint8_t shadow_dma_start;
+			do
+			{
+				co_await scheduler.cycles(cycle_scheduler::unit::dma, cycle_scheduler::priority::write, 8);
+
+				shadow_dma_start = registers.dma_start;
+				if (shadow_dma_start >= 0xE0)
+				{
+					// trying to DMA from 0xE000-0xFFFF will actually read from 0xC000-0xDFFF (wram mirroring)
+					// DMA'ing from 0xFE00 will actually read from 0xDE00 not OAM!
+					shadow_dma_start -= 0x20;
+				}
+
+				// block access to oam
+				memory.set_mapping({ 0xFE00, 0xFEA0, nullptr, nullptr });
+
+				was_interrupted = co_await scheduler.interruptible_cycles(interrupts.dma_trigger, cycle_scheduler::unit::dma, cycle_scheduler::priority::write, 640);
+			} while (was_interrupted);
+
+			// perform DMA copy
+			for (uint8_t offset = 0; offset < 0xA0; ++offset)
+			{
+				((uint8_t*)&oam[0])[offset] = memory.read8(shadow_dma_start * 0x100 + offset);
+			}
+
+			// restore access to oam
+			memory.set_mapping({ 0xFE00, 0xFEA0, (uint8_t*)oam.data(), (uint8_t*)oam.data() });
+		};
 	}
 }

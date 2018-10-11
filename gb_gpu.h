@@ -2,13 +2,11 @@
 
 #include "gb_cycle_scheduler.h"
 #include "gb_interrupt.h"
+#include "single_future.h"
 
 #include <array>
 #include <cstdint>
 #include <functional>
-
-template <typename T>
-struct single_future;
 
 namespace coro_gb
 {
@@ -60,14 +58,14 @@ namespace coro_gb
 		static void fifo_apply_sprite_pixel(fifo_entry& fifo, sprite_attributes::flags_t flags, uint8_t sprite_pixel);
 		static void fifo_apply_sprite(fifo_entry* fifo, uint8_t low_bits, uint8_t high_bits, sprite_attributes::flags_t flags);
 
-		uint8_t on_vram_read(uint16_t address) const;
-		void on_vram_write(uint16_t address, uint8_t value);
 		uint8_t on_register_read(uint16_t address) const;
 		void on_register_write(uint16_t address, uint8_t value);
 
 		bool stat_flag = false;
 		bool vblank_flag = false;
 		void update_interrupt_flags();
+
+		single_future<void> run_dma();
 
 		cycle_scheduler& scheduler;
 		memory_mapper& memory;
@@ -83,10 +81,13 @@ namespace coro_gb
 			0xFF081820,
 		};
 
+		single_future<void> dma_task;
+
 		// LCD Interrupts:
 		struct interrupts_t
 		{
 			interrupt lcd_enable;
+			interrupt dma_trigger;
 		};
 		interrupts_t interrupts;
 

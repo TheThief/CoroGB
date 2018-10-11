@@ -35,14 +35,14 @@ Notes:
 
 | Test                    | mooneye-gb | CoroGB |
 | ----------------------- | ---------- | ------ |
-| add sp e timing         | :+1:       | :o:    |
+| add sp e timing         | :+1:       | :+1:   |
 | boot div dmgABCmgb      | :x:        | :x:    |
 | boot hwio dmgABCmgb     | :x:        | :x:    |
 | boot regs dmgABC        | :+1:       | :+1:   |
-| call timing             | :+1:       | :o:    |
-| call timing2            | :+1:       | :o:    |
-| call cc_timing          | :+1:       | :o:    |
-| call cc_timing2         | :+1:       | :o:    |
+| call timing             | :+1:       | :+1:   |
+| call timing2            | :+1:       | :+1:   |
+| call cc_timing          | :+1:       | :+1:   |
+| call cc_timing2         | :+1:       | :+1:   |
 | di timing GS            | :+1:       | :+1:   |
 | div timing              | :+1:       | :+1:   |
 | ei sequence             | :+1:       | :+1:   |
@@ -53,25 +53,23 @@ Notes:
 | halt ime1 timing2 GS    | :+1:       | :+1:   |
 | if ie registers         | :+1:       | :+1:   |
 | intr timing             | :+1:       | :+1:   |
-| jp timing               | :+1:       | :o:    |
-| jp cc timing            | :+1:       | :o:    |
-| ld hl sp e timing       | :+1:       | :o:    |
-| oam dma_restart         | :+1:       | :o:    |
-| oam dma start           | :+1:       | :o:    |
-| oam dma timing          | :+1:       | :o:    |
-| pop timing              | :+1:       | :x:    |
-| push timing             | :+1:       | :x:    |
+| jp timing               | :+1:       | :+1:   |
+| jp cc timing            | :+1:       | :+1:   |
+| ld hl sp e timing       | :+1:       | :+1:   |
+| oam dma_restart         | :+1:       | :+1:   |
+| oam dma start           | :+1:       | :+1:   |
+| oam dma timing          | :+1:       | :+1:   |
+| pop timing              | :+1:       | :+1:   |
+| push timing             | :+1:       | :+1:   |
 | rapid di ei             | :+1:       | :+1:   |
-| ret timing              | :+1:       | :o:    |
-| ret cc timing           | :+1:       | :o:    |
-| reti timing             | :+1:       | :o:    |
+| ret timing              | :+1:       | :+1:   |
+| ret cc timing           | :+1:       | :+1:   |
+| reti timing             | :+1:       | :+1:   |
 | reti intr timing        | :+1:       | :+1:   |
-| rst timing              | :+1:       | :o:    |
+| rst timing              | :+1:       | :+1:   |
 
 Notes:
 
-* :o: all need dma timing emulation
-* pop/push timing tests need 16 bit writes correctly emulated as two 8-bit writes
 * boot_hwio-dmgABCmgb needs sound emulation
 * halt_ime1_timing needs timer
 
@@ -119,6 +117,10 @@ Notes:
 | stat irq blocking           | :x:        | :+1:   |
 | stat lyc onoff              | :x:        | :x:    |
 | vblank stat intr GS         | :+1:       | :x:    |
+
+Notes:
+
+* Yes, CoroGB implements stat IRQ blocking!
 
 #### Serial
 
