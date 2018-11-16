@@ -16,22 +16,34 @@ namespace coro_gb
 		return scheduler.cycles(cycle_scheduler::unit::cpu, priority, wait);
 	}
 
+	// we add any dummy/additional cycles on to the next wait for efficiency
+#define dummy_wait(wait) \
+	additional_cycles += wait;
+
+#define read_wait(wait) \
+	co_await cycles(cycle_scheduler::priority::read, wait + additional_cycles); \
+	additional_cycles = 0;
+
+#define write_wait(wait) \
+	co_await cycles(cycle_scheduler::priority::write, wait + additional_cycles); \
+	additional_cycles = 0;
+
 #define cpu_read8(var, cast, address) \
-	co_await cycles(cycle_scheduler::priority::read, 4); \
+	read_wait(4); \
 	var = static_cast<cast>(memory.read8(address));
 
 #define cpu_write8(address, value) \
-	co_await cycles(cycle_scheduler::priority::write, 4); \
+	write_wait(4); \
 	memory.write8(address, value);
 
 // todo - technically this should be split 4 cycles for each 8-bit read
 #define cpu_read16(var, cast, address) \
-	co_await cycles(cycle_scheduler::priority::read, 8); \
+	read_wait(8); \
 	var = static_cast<cast>(memory.read16(address));
 
 // todo - technically this should be split 4 cycles for each 8-bit write
 #define cpu_write16(address, value) \
-	co_await cycles(cycle_scheduler::priority::write, 8); \
+	write_wait(8); \
 	memory.write16(address, value);
 
 #define cpu_read8_pc(var, cast) \
@@ -42,16 +54,16 @@ namespace coro_gb
 	cpu_read16(var, cast, registers.PC); \
 	registers.PC += 2;
 
-	// 8 cycles on first wait due to combining the 4 cycle internal delay from adjusting the SP register with the 4 cycle write
 #define cpu_push16(value) \
 	registers.SP -= 2; \
-	co_await cycles(cycle_scheduler::priority::write, 8); \
+	dummy_wait(4) \
+	write_wait(4); \
 	memory.write8(registers.SP + 1, (value) >> 8); \
 	co_await cycles(cycle_scheduler::priority::write, 4); \
 	memory.write8(registers.SP, (value) & 0xFF);
 
 #define cpu_pop16(var) \
-	co_await cycles(cycle_scheduler::priority::read, 4); \
+	read_wait(4); \
 	var = memory.read8(registers.SP); \
 	co_await cycles(cycle_scheduler::priority::read, 4); \
 	var |= (uint16_t)memory.read8(registers.SP + 1) << 8; \
@@ -64,16 +76,12 @@ namespace coro_gb
 
 		while (true)
 		{
-			// so many instructions take extra cycles at the end we handle that just once (here) rather than in every instruction that takes more than one machine cycle
-			if (additional_cycles)
-			{
-				co_await cycles(cycle_scheduler::priority::read, additional_cycles);
-				additional_cycles = 0;
-			}
-
 			// handle interrupts
 			if (registers.enable_interrupts)
 			{
+				// interrupts are checked on T-cycle 2 of an instruction
+				read_wait(2);
+
 				memory_mapper::interrupt_bits_t triggered_interrupts = (memory.interrupt_flag & memory.interrupt_enable);
 				if ((triggered_interrupts.u8 & 0x1F) != 0)
 				{
@@ -112,13 +120,16 @@ namespace coro_gb
 						memory.interrupt_flag.joypad = 0;
 					}
 
-					co_await cycles(cycle_scheduler::priority::read, 8);
+					dummy_wait(6); // realign to 4-cycle clock
 					cpu_push16(registers.PC);
 					registers.PC = interrupt_dest;
+					dummy_wait(2); // realign to T-cycle 2 ready for CPU to read opcode on T-cycle 3
 				}
 			}
 			else
 			{
+				// interrupts are checked on T-cycle 2 of an instruction, but as they are disabled we'll just dummy the two cycles
+				dummy_wait(2);
 				registers.enable_interrupts = registers.enable_interrupts_delay;
 			}
 
@@ -135,9 +146,8 @@ namespace coro_gb
 			}
 #endif
 
-			co_await cycles(cycle_scheduler::priority::read, 4);
+			read_wait(1); // opcode read happens on T-cycle 3
 			const uint8_t opcode = memory.read8(registers.PC);
-
 			if (!halt_bug)
 			{
 				++registers.PC;
@@ -146,6 +156,7 @@ namespace coro_gb
 			{
 				halt_bug = false;
 			}
+			read_wait(1);
 
 			switch (opcode >> 6)
 			{
@@ -173,7 +184,7 @@ namespace coro_gb
 							{
 								cpu_read8_pc(int8_t offset, int8_t);
 								registers.PC += offset;
-								additional_cycles = 4;
+								dummy_wait(4);
 								continue;
 							}
 
@@ -183,7 +194,7 @@ namespace coro_gb
 								if (registers.F_Zero == ((opcode >> 3) & 0b1))
 								{
 									registers.PC += offset;
-									additional_cycles = 4;
+									dummy_wait(4);
 								}
 								continue;
 							}
@@ -194,7 +205,7 @@ namespace coro_gb
 								if (registers.F_Carry == ((opcode >> 3) & 0b1))
 								{
 									registers.PC += offset;
-									additional_cycles = 4;
+									dummy_wait(4);
 								}
 								continue;
 							}
@@ -315,7 +326,7 @@ namespace coro_gb
 										++registers.SP;
 										break;
 								}
-								additional_cycles = 4;
+								dummy_wait(4);
 								continue;
 							}
 
@@ -336,7 +347,7 @@ namespace coro_gb
 										--registers.SP;
 										break;
 								}
-								additional_cycles = 4;
+								dummy_wait(4);
 								continue;
 							}
 							break;
@@ -572,7 +583,7 @@ namespace coro_gb
 							uint64_t halt_total_cycles = scheduler.get_cycle_counter() - halt_start_cycles;
 							if (halt_total_cycles % 4 != 0)
 							{
-								additional_cycles = 4 - (halt_total_cycles % 4); // re-align to 4-cycle boundary
+								dummy_wait(4 - (halt_total_cycles % 4)); // re-align to 4-cycle boundary
 							}
 
 							// jump to interrupt handler is handled by the interrupt handling code at the start of the loop
@@ -762,11 +773,11 @@ namespace coro_gb
 							if ((opcode & 0b11110111) == 0b11000000) // ret nz/z
 							{
 								// conditional ret has an extra machine cycle delay while it checks the condition
-								co_await cycles(cycle_scheduler::priority::read, 4);
+								dummy_wait(4);
 								if (registers.F_Zero == ((opcode >> 3) & 0b1))
 								{
 									cpu_pop16(registers.PC);
-									additional_cycles = 4;
+									dummy_wait(4);
 								}
 								continue;
 							}
@@ -774,11 +785,11 @@ namespace coro_gb
 							if ((opcode & 0b11110111) == 0b11010000) // ret nc/c
 							{
 								// conditional ret has an extra machine cycle delay while it checks the condition
-								co_await cycles(cycle_scheduler::priority::read, 4);
+								dummy_wait(4);
 								if (registers.F_Carry == ((opcode >> 3) & 0b1))
 								{
 									cpu_pop16(registers.PC);
-									additional_cycles = 4;
+									dummy_wait(4);
 								}
 								continue;
 							}
@@ -806,7 +817,7 @@ namespace coro_gb
 								registers.F_HalfCarry = ((original & 0x0F) + (value & 0x0F)) > 0x0F;
 								registers.F_Subtract = 0;
 								registers.F_Zero = 0;
-								additional_cycles = 8;
+								dummy_wait(8);
 								continue;
 							}
 
@@ -820,7 +831,7 @@ namespace coro_gb
 								registers.F_HalfCarry = ((original & 0x0F) + (value & 0x0F)) > 0x0F;
 								registers.F_Subtract = 0;
 								registers.F_Zero = 0;
-								additional_cycles = 4;
+								dummy_wait(4);
 								continue;
 							}
 							break;
@@ -852,7 +863,7 @@ namespace coro_gb
 							if (opcode == 0b11001001) // ret
 							{
 								cpu_pop16(registers.PC);
-								additional_cycles = 4;
+								dummy_wait(4);
 								continue;
 							}
 
@@ -861,7 +872,7 @@ namespace coro_gb
 								cpu_pop16(registers.PC);
 								registers.enable_interrupts = true;
 								registers.enable_interrupts_delay = true;
-								additional_cycles = 4;
+								dummy_wait(4);
 								continue;
 							}
 
@@ -885,7 +896,7 @@ namespace coro_gb
 								if (registers.F_Zero == ((opcode >> 3) & 0b1))
 								{
 									registers.PC = dest;
-									additional_cycles = 4;
+									dummy_wait(4);
 								}
 								continue;
 							}
@@ -896,7 +907,7 @@ namespace coro_gb
 								if (registers.F_Carry == ((opcode >> 3) & 0b1))
 								{
 									registers.PC = dest;
-									additional_cycles = 4;
+									dummy_wait(4);
 								}
 								continue;
 							}
@@ -933,7 +944,7 @@ namespace coro_gb
 							{
 								cpu_read16_pc(uint16_t dest, uint16_t);
 								registers.PC = dest;
-								additional_cycles = 4;
+								dummy_wait(4);
 								continue;
 							}
 
