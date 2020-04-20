@@ -74,12 +74,23 @@ namespace coro_gb
 		bool halt_bug = false;
 		uint8_t additional_cycles = 0;
 
+		// The CPU has one dummy M cycle on reset
+		dummy_wait(4);
+
 		while (true)
 		{
+			// The cpu has one level of pipelining, where memory reads and instruction execution are overlapped
+			// The read/write macros above wait before completing the read/write on the first rising edge of the new M-cycle
+			// Effectively, before a wait we are still on the rising edge at the start of the previous M-cycle
+			// When we get back to the top of the loop we are still on the initial rising edge of the final M-cycle of the last instruction executed!
+			// We don't get into the new M-cycle until after the first call to read!
+			// External bus reads are technically latched on the last T-cycle of the M-cycle before, but we don't have anything timing-sensitive on the external bus
+			// so we just emulate all reads/writes as occuring on the first T-cycle of the new M-cycle
+
 			// handle interrupts
 			if (registers.enable_interrupts)
 			{
-				// interrupts are checked on T-cycle 2 of an instruction
+				// interrupts are checked on the 3rd T-cycle (2) of the last M-cycle of the prior instruction
 				read_wait(2);
 
 				memory_mapper::interrupt_bits_t triggered_interrupts = (memory.interrupt_flag & memory.interrupt_enable);
@@ -123,7 +134,7 @@ namespace coro_gb
 					dummy_wait(6); // realign to 4-cycle clock
 					cpu_push16(registers.PC);
 					registers.PC = interrupt_dest;
-					dummy_wait(2); // realign to T-cycle 2 ready for CPU to read opcode on T-cycle 3
+					dummy_wait(2); // realign to T-cycle 2 ready for CPU to read opcode
 				}
 			}
 			else
@@ -146,7 +157,7 @@ namespace coro_gb
 			}
 #endif
 
-			read_wait(1); // opcode read happens on T-cycle 3
+			read_wait(2);
 			const uint8_t opcode = memory.read8(registers.PC);
 			if (!halt_bug)
 			{
@@ -156,7 +167,6 @@ namespace coro_gb
 			{
 				halt_bug = false;
 			}
-			read_wait(1);
 
 			switch (opcode >> 6)
 			{
@@ -581,10 +591,12 @@ namespace coro_gb
 							co_await memory.interrupts.cpu_wake;
 
 							uint64_t halt_total_cycles = scheduler.get_cycle_counter() - halt_start_cycles;
-							if (halt_total_cycles % 4 != 0)
-							{
-								dummy_wait(4 - (halt_total_cycles % 4)); // re-align to 4-cycle boundary
-							}
+
+							// re-align to 4-cycle boundary
+							// as interrupts are tested on the 3rd t-cycle, if we get an interrupt before that cycle,
+							// but after cycle 0, we need to rewind so the exception code above works correctly
+							// 0->0, 1->-1, 2->-2, 3->+1
+							dummy_wait(1 - ((halt_total_cycles + 1) % 4));
 
 							// jump to interrupt handler is handled by the interrupt handling code at the start of the loop
 							continue;

@@ -22,16 +22,16 @@ namespace coro_gb
 		{
 			debug,
 			dma,
-			gpu,
-			cpu,
+			cpu, // cpu clocks on the rising edge
+			gpu, // gpu clocks on the falling edge (inverted clock)
 			//serial,
 			//sound,
 		};
 
 		enum class priority : uint8_t
 		{
-			write = 0,
-			read = 1,
+			read,
+			write=read, // because cpu and gpu clock on different edges, I don't think we actually need different priority for reads/writes
 		};
 
 		struct awaitable_cycles_base
