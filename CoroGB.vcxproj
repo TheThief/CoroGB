@@ -107,6 +107,7 @@
     <ClCompile Include="gb_cpu.cpp" />
     <ClCompile Include="gb_cycle_scheduler.cpp" />
     <ClInclude Include="gb_emu.h" />
+    <ClCompile Include="gb_emu.cpp" />
     <ClCompile Include="gb_gpu.cpp" />
     <ClCompile Include="gb_memory_mapper.cpp" />
     <ClCompile Include="windows.cpp" />

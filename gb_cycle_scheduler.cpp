@@ -2,16 +2,17 @@
 
 namespace coro_gb
 {
-	void cycle_scheduler::queue(uint32_t at, uint16_t priority, std::function<void()> fn)
+	void cycle_scheduler::queue(uint32_t at, unit unit, priority priority, std::function<void()> fn)
 	{
-		if (std::make_tuple((int32_t)(at - cycle_counter), priority)
+		uint16_t priority_value = ((uint16_t) priority << 8 | (uint8_t) unit);
+		if (std::make_tuple((int32_t)(at - cycle_counter), priority_value)
 			< std::make_tuple((int32_t)(next - cycle_counter), next_priority))
 		{
 			next = at;
-			next_priority = priority;
+			next_priority = priority_value;
 		}
 
-		queued.push({ at, priority, fn });
+		queued.push({ at, priority_value, fn });
 	}
 
 	void cycle_scheduler::tick(uint32_t num_cycles)
@@ -43,8 +44,7 @@ namespace coro_gb
 
 	void cycle_scheduler::awaitable_cycles_base::await_suspend(std::coroutine_handle<> handle)
 	{
-		uint16_t priority_value = ((uint16_t)priority << 8 | (uint8_t)unit);
-		scheduler.queue(wait_until, priority_value, handle);
+		scheduler.queue(wait_until, unit, priority, handle);
 	}
 
 	bool cycle_scheduler::awaitable_cycles_interruptible::await_resume()

@@ -54,6 +54,12 @@ std::chrono::high_resolution_clock::time_point sync_time;
 uint32_t sync_cycles;
 bool speedup_active = false;
 
+int32_t running_test = -1;
+std::wstring_view tests =
+{
+	L"mooneye-gb_hwtests/acceptance/ppu",
+};
+
 const TCHAR* appid = L"Thief.CoroGB.001";
 
 ATOM register_window_class(HINSTANCE hInstance);
@@ -363,8 +369,27 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT Message, WPARAM wParam, LPARAM lParam)
 					return 0;
 				}
 				case IDM_EXIT:
+				{
 					DestroyWindow(hWnd);
 					return 0;
+				}
+				case ID_TESTS_RUNTESTS:
+				{
+					return 0;
+				}
+				case ID_PALETTE_GREY:
+				case ID_PALETTE_GREEN:
+				case ID_PALETTE_RED:
+				case ID_PALETTE_BLUE:
+				case ID_PALETTE_GBR:
+				{
+					if (emu_instance)
+					{
+						emu_instance->select_palette((coro_gb::palette_preset)(wmId - ID_PALETTE_GREY));
+						InvalidateRect(main_window, nullptr, FALSE);
+					}
+					return 0;
+				}
 			}
 		}
 		case WM_ERASEBKGND:
@@ -493,7 +518,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT Message, WPARAM wParam, LPARAM lParam)
 
 			if (emu_instance && emu_instance->is_screen_enabled())
 			{
-				bitmap_info<4, 8> bmi(160, 144, (RGBQUAD*)emu_instance->get_palette());
+				bitmap_info<12, 8> bmi(160, 144, (RGBQUAD*)emu_instance->get_palette());
 
 				int result = StretchDIBits(hdc,
 					ps.rcPaint.left, ps.rcPaint.top,

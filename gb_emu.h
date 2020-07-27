@@ -8,8 +8,9 @@
 #include "single_future.h"
 #include "gb_cart.h"
 
-#include <filesystem>
+#include <array>
 #include <chrono>
+#include <filesystem>
 
 namespace coro_gb
 {
@@ -18,6 +19,15 @@ namespace coro_gb
 	// 456 Cycles per line
 	// 70224 Cycles per frame (16.6ms / 59.73 Hz)
 	using cycles = std::chrono::duration<int64_t, std::ratio<1, 4'194'304>>;
+
+	enum class palette_preset : uint8_t
+	{
+		grey,
+		green,
+		blue,
+		red,
+		gbr,
+	};
 
 	struct emu final
 	{
@@ -35,6 +45,7 @@ namespace coro_gb
 		bool is_screen_enabled() const;
 		const uint8_t* get_screen_buffer() const;
 		const uint32_t* get_palette() const;
+		void select_palette(palette_preset in_palette_preset);
 		void set_display_callback(std::function<void()> display_callback);
 
 		void input(button_id button, button_state state);
@@ -44,6 +55,7 @@ namespace coro_gb
 		memory_mapper memory_mapper;
 		cpu cpu;
 		gpu gpu;
+		std::array<std::array<uint32_t, 4>, 3> palette;
 		cart* loaded_cart = nullptr;
 		single_future<void> cpu_running;
 		single_future<void> gpu_running;
@@ -54,6 +66,7 @@ namespace coro_gb
 		, cpu{ scheduler, memory_mapper }
 		, gpu{ scheduler, memory_mapper }
 	{
+		select_palette(palette_preset::green);
 	}
 
 	inline emu::~emu()
@@ -117,7 +130,7 @@ namespace coro_gb
 
 	inline const uint32_t* emu::get_palette() const
 	{
-		return gpu.get_palette();
+		return reinterpret_cast<const uint32_t*>(palette.data());
 	}
 
 	inline void emu::set_display_callback(std::function<void()> display_callback)

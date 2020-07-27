@@ -86,7 +86,7 @@ namespace coro_gb
 			return cycle_counter;
 		}
 
-		void queue(uint32_t at, uint16_t priority, std::function<void()> fn);
+		void queue(uint32_t at, unit unit, priority priority, std::function<void()> fn);
 
 		void tick(uint32_t num_cycles);
 

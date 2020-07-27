@@ -77,5 +77,8 @@
     <ClCompile Include="gb_cart.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="gb_emu.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
 </Project>

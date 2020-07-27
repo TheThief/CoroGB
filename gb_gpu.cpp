@@ -96,22 +96,24 @@ namespace coro_gb
 				}
 				else //if (pixel.type == 1)
 				{
-					return (sprite_palettes[pixel.palette].u8 >> (pixel.colour * 2)) & 0x03;
+					return ((pixel.palette << 2) + 0x4) | ((sprite_palettes[pixel.palette].u8 >> (pixel.colour * 2)) & 0x03);
 				}
 			}
 		};
 
 		while (true)
 		{
+			bool bLCDOnBug = false;
 			if (!registers.lcd_control.lcd_enable)
 			{
 				stat_flag = false;
 				vblank_flag = false;
 				registers.lcd_y = 0;
-				registers.lcd_stat.mode = (registers_t::lcd_mode)0;
+				registers.lcd_stat.mode = (lcd_mode)0;
 				registers.lcd_stat.coincidence = false;
 				interrupts.lcd_enable.reset();
 				co_await interrupts.lcd_enable;
+				bLCDOnBug = true;
 			}
 
 			uint8_t window_y = 0;
@@ -119,39 +121,55 @@ namespace coro_gb
 			for (uint8_t y = 0; y < 144; ++y)
 			{
 				uint32_t line_start = scheduler.get_cycle_counter();
-
-				registers.lcd_y = y;
-				registers.lcd_stat.coincidence = (registers.lcd_yc == registers.lcd_y);
-
-				// sort sprites
-				registers.lcd_stat.mode = registers_t::lcd_mode::oam_search;
-				memory.set_mapping({ 0xFE00, 0xFEA0, nullptr, nullptr }); // block access to oam
-				update_interrupt_flags();
-
-				std::vector<sprite_attributes> sprites;
-				uint8_t sprite_size = registers.lcd_control.sprite_size ? 16 : 8;
-				if (registers.lcd_control.sprite_enable)
+				if (!bLCDOnBug)
+				{ }
+				else
 				{
-					for (const sprite_attributes& sprite : oam)
-					{
-						if (sprite.y - 16 <= y && sprite.y - 16 + sprite_size > y)
-						{
-							sprites.push_back(sprite);
-						}
-					}
-
-					if (sprites.size() > 10)
-					{
-						sprites.resize(10);
-					}
-					std::stable_sort(std::begin(sprites), std::end(sprites), [](const sprite_attributes& lhs, const sprite_attributes& rhs) { return lhs.x < rhs.x; });
+					line_start -= 4;
 				}
 
-				co_await cycles(cycle_scheduler::priority::write, 80);
+				std::vector<sprite_attributes> sprites;
+				uint8_t sprite_size = 0;
+				if (!bLCDOnBug)
+				{
+					// sort sprites
+					update_stat(lcd_mode::oam_search, y);
+
+					sprite_size = registers.lcd_control.sprite_size ? 16 : 8;
+					if (registers.lcd_control.sprite_enable)
+					{
+						for (sprite_attributes sprite : oam)
+						{
+							if (sprite.y - 16 <= y && sprite.y - 16 + sprite_size > y)
+							{
+								if (registers.lcd_control.sprite_size)
+									sprite.tile_index &= 0xFE;
+								sprites.push_back(sprite);
+							}
+						}
+
+						if (sprites.size() > 10)
+						{
+							sprites.resize(10);
+						}
+						std::stable_sort(std::begin(sprites), std::end(sprites), [](const sprite_attributes& lhs, const sprite_attributes& rhs) { return lhs.x < rhs.x; });
+					}
+
+					co_await cycles(cycle_scheduler::priority::write, 80);
+					sprite_size = registers.lcd_control.sprite_size ? 16 : 8;
+				}
+				else
+				{
+					// LCD On Bug
+					update_stat(lcd_mode::h_blank, y);
+
+					co_await cycles(cycle_scheduler::priority::write, 76);
+					memory.set_mapping({ 0xFE00, 0xFEA0, nullptr, nullptr }); // block access to oam
+					bLCDOnBug = false;
+				}
 
 				// draw line
-				registers.lcd_stat.mode = registers_t::lcd_mode::lcd_write;
-				memory.set_mapping({ 0x8000, 0x9FFF, nullptr, nullptr }); // block access to vram
+				update_stat(lcd_mode::lcd_write, y);
 
 				const uint16_t tiledata_base_addr_low = registers.lcd_control.tiledata_select ? 0x0000 : 0x1000;
 				const uint16_t tiledata_base_addr_high = 0x0000;
@@ -195,63 +213,57 @@ namespace coro_gb
 				uint8_t window_x = -1;
 
 				// discard first 8 pixels to allow the window to be at 0-6 position
-				if (!window_enable)
+				for (uint8_t x = 0; x < 8; )
 				{
-					//window_x = 7; // might be neccessary if window can be enabled mid-scanline
-				}
-				else
-				{
-					for (uint8_t x = 0; x < 8; )
+					uint8_t complete = std::min<uint8_t>(fifo_count - 8, 8 - x);
+					if (window_enable && !in_window)
 					{
-						uint8_t complete = std::min<uint8_t>(fifo_count - 8, 8 - x);
-						if (window_enable && !in_window)
-						{
-							complete = std::min<uint8_t>(complete, registers.window_x - window_x);
-						}
-						//std::transform(&fifo[0], &fifo[complete], &screen[y * 160 + x], gpu_tranform_fifo_to_output{ registers.background_palette, memory.obj_palette[0], memory.obj_palette[1] });
-						std::copy_n(&fifo[complete], fifo_count - complete, &fifo[0]);
-						fifo_count -= complete;
-						x += complete;
-						window_x += complete;
+						complete = std::min<uint8_t>(complete, registers.window_x - window_x);
+					}
+					//std::transform(&fifo[0], &fifo[complete], &screen[y * 160 + x], gpu_tranform_fifo_to_output{ registers.background_palette, memory.obj_palette[0], memory.obj_palette[1] });
+					std::copy_n(&fifo[complete], fifo_count - complete, &fifo[0]);
+					fifo_count -= complete;
+					x += complete;
+					window_x += complete;
 
-						if (window_enable && !in_window && window_x == registers.window_x)
-						{
-							in_window = true;
-							tile_y = (window_y / 8) % 32;
-							sub_tile_y = window_y % 8;
-							++window_y;
+					if (window_enable && !in_window && window_x == registers.window_x)
+					{
+						in_window = true;
+						tile_y = (window_y / 8) % 32;
+						sub_tile_y = window_y % 8;
+						++window_y;
 
-							{
-								tile_x = 0;
-								uint8_t tile_index = vram[window_tilemap_base_addr + tile_y * 32 + tile_x];
-								uint16_t tile_data_base_addr = (tile_index < 0x80 ? tiledata_base_addr_low : tiledata_base_addr_high);
-								uint16_t tile_data_index = tile_data_base_addr + ((uint16_t)tile_index * 8 + sub_tile_y) * 2;
-								uint8_t low_bits = vram[tile_data_index];
-								uint8_t high_bits = vram[tile_data_index + 1];
-								fifo_apply_bg(&fifo[8], low_bits, high_bits);
-								fifo_count = 16;
-								//co_await cycles(6);
-							}
-						}
-						else if (fifo_count == 8)
 						{
-							if (bg_enable)
-							{
-								tile_x = (tile_x + 1) % 32;
-								uint8_t tile_index = vram[bg_tilemap_base_addr + tile_y * 32 + tile_x];
-								uint16_t tile_data_base_addr = (tile_index < 0x80 ? tiledata_base_addr_low : tiledata_base_addr_high);
-								uint16_t tile_data_index = tile_data_base_addr + ((uint16_t)tile_index * 8 + sub_tile_y) * 2;
-								uint8_t low_bits = vram[tile_data_index];
-								uint8_t high_bits = vram[tile_data_index + 1];
-								fifo_apply_bg(&fifo[8], low_bits, high_bits);
-								fifo_count = 16;
-								//co_await cycles(6);
-							}
-							else
-							{
-								std::fill_n(&fifo[8], 8, fifo_entry{ 0, 0 ,0 });
-								fifo_count = 16;
-							}
+							tile_x = 0;
+							uint8_t tile_index = vram[window_tilemap_base_addr + tile_y * 32 + tile_x];
+							uint16_t tile_data_base_addr = (tile_index < 0x80 ? tiledata_base_addr_low : tiledata_base_addr_high);
+							uint16_t tile_data_index = tile_data_base_addr + ((uint16_t)tile_index * 8 + sub_tile_y) * 2;
+							uint8_t low_bits = vram[tile_data_index];
+							uint8_t high_bits = vram[tile_data_index + 1];
+							fifo_apply_bg(&fifo[8], low_bits, high_bits);
+							fifo_count = 16;
+							//co_await cycles(6);
+							tile_x = 1;
+						}
+					}
+					else if (fifo_count == 8)
+					{
+						if (bg_enable)
+						{
+							uint8_t tile_index = vram[bg_tilemap_base_addr + tile_y * 32 + tile_x];
+							uint16_t tile_data_base_addr = (tile_index < 0x80 ? tiledata_base_addr_low : tiledata_base_addr_high);
+							uint16_t tile_data_index = tile_data_base_addr + ((uint16_t)tile_index * 8 + sub_tile_y) * 2;
+							uint8_t low_bits = vram[tile_data_index];
+							uint8_t high_bits = vram[tile_data_index + 1];
+							fifo_apply_bg(&fifo[8], low_bits, high_bits);
+							fifo_count = 16;
+							//co_await cycles(6);
+							tile_x = (tile_x + 1) % 32;
+						}
+						else
+						{
+							std::fill_n(&fifo[8], 8, fifo_entry{ 0, 0 ,0 });
+							fifo_count = 16;
 						}
 					}
 				}
@@ -306,13 +318,13 @@ namespace coro_gb
 							fifo_apply_bg(&fifo[8], low_bits, high_bits);
 							fifo_count = 16;
 							//co_await cycles(6);
+							tile_x = 1;
 						}
 					}
 					else if (fifo_count == 8)
 					{
 						if (in_window)
 						{
-							tile_x = (tile_x + 1) % 32;
 							uint8_t tile_index = vram[window_tilemap_base_addr + tile_y * 32 + tile_x];
 							uint16_t tile_data_base_addr = (tile_index < 0x80 ? tiledata_base_addr_low : tiledata_base_addr_high);
 							uint16_t tile_data_index = tile_data_base_addr + ((uint16_t)tile_index * 8 + sub_tile_y) * 2;
@@ -321,10 +333,10 @@ namespace coro_gb
 							fifo_apply_bg(&fifo[8], low_bits, high_bits);
 							fifo_count = 16;
 							//co_await cycles(6);
+							tile_x = (tile_x + 1) % 32;
 						}
 						else if (bg_enable)
 						{
-							tile_x = (tile_x + 1) % 32;
 							uint8_t tile_index = vram[bg_tilemap_base_addr + tile_y * 32 + tile_x];
 							uint16_t tile_data_base_addr = (tile_index < 0x80 ? tiledata_base_addr_low : tiledata_base_addr_high);
 							uint16_t tile_data_index = tile_data_base_addr + ((uint16_t)tile_index * 8 + sub_tile_y) * 2;
@@ -333,6 +345,7 @@ namespace coro_gb
 							fifo_apply_bg(&fifo[8], low_bits, high_bits);
 							fifo_count = 16;
 							//co_await cycles(6);
+							tile_x = (tile_x + 1) % 32;
 						}
 						else
 						{
@@ -390,13 +403,13 @@ namespace coro_gb
 							fifo_apply_bg(&fifo[8], low_bits, high_bits);
 							fifo_count = 16;
 							//co_await cycles(6);
+							tile_x = 1;
 						}
 					}
 					else if (fifo_count == 8)
 					{
 						if (in_window)
 						{
-							tile_x = (tile_x + 1) % 32;
 							uint8_t tile_index = vram[window_tilemap_base_addr + tile_y * 32 + tile_x];
 							uint16_t tile_data_base_addr = (tile_index < 0x80 ? tiledata_base_addr_low : tiledata_base_addr_high);
 							uint16_t tile_data_index = tile_data_base_addr + ((uint16_t)tile_index * 8 + sub_tile_y) * 2;
@@ -405,10 +418,10 @@ namespace coro_gb
 							fifo_apply_bg(&fifo[8], low_bits, high_bits);
 							fifo_count = 16;
 							//co_await cycles(6);
+							tile_x = (tile_x + 1) % 32;
 						}
 						else if (bg_enable)
 						{
-							tile_x = (tile_x + 1) % 32;
 							uint8_t tile_index = vram[bg_tilemap_base_addr + tile_y * 32 + tile_x];
 							uint16_t tile_data_base_addr = (tile_index < 0x80 ? tiledata_base_addr_low : tiledata_base_addr_high);
 							uint16_t tile_data_index = tile_data_base_addr + ((uint16_t)tile_index * 8 + sub_tile_y) * 2;
@@ -417,6 +430,7 @@ namespace coro_gb
 							fifo_apply_bg(&fifo[8], low_bits, high_bits);
 							fifo_count = 16;
 							//co_await cycles(6);
+							tile_x = (tile_x + 1) % 32;
 						}
 						else
 						{
@@ -426,13 +440,10 @@ namespace coro_gb
 					}
 				}
 
-				co_await cycles(cycle_scheduler::priority::write, 172); //?
+				co_await cycles(cycle_scheduler::priority::write, 174); //? Geikko says this should be 173.5
 
 				// h blank
-				registers.lcd_stat.mode = registers_t::lcd_mode::h_blank;
-				memory.set_mapping({ 0xFE00, 0xFEA0, (uint8_t*)oam.data(), (uint8_t*)oam.data() }); // restore access to oam
-				memory.set_mapping({ 0x8000, 0x9FFF, vram.data(), vram.data() });                   // restore access to vram
-				update_interrupt_flags();
+				update_stat(lcd_mode::h_blank, y);
 
 				co_await cycles(cycle_scheduler::priority::write, (line_start + 456) - scheduler.get_cycle_counter());
 			}
@@ -440,10 +451,7 @@ namespace coro_gb
 			display_callback();
 
 			//v blank
-			registers.lcd_stat.mode = registers_t::lcd_mode::v_blank;
-			registers.lcd_y = 144;
-			registers.lcd_stat.coincidence = (registers.lcd_yc == registers.lcd_y);
-			update_interrupt_flags(); // should we be triggering an oam interrupt at the start of vblank? Sources vary on this
+			update_stat(lcd_mode::v_blank, 144);
 
 			co_await interruptible_cycles(cycle_scheduler::priority::write, 456);
 			if (!registers.lcd_control.lcd_enable)
@@ -453,9 +461,7 @@ namespace coro_gb
 
 			for (uint8_t y = 145; y < 153; ++y)
 			{
-				registers.lcd_y = y;
-				registers.lcd_stat.coincidence = (registers.lcd_yc == registers.lcd_y);
-				update_interrupt_flags();
+				update_stat(lcd_mode::v_blank, y);
 
 				co_await interruptible_cycles(cycle_scheduler::priority::write, 456);
 				if (!registers.lcd_control.lcd_enable)
@@ -469,19 +475,24 @@ namespace coro_gb
 				continue;
 			}
 
-			registers.lcd_y = 153;
-			registers.lcd_stat.coincidence = (registers.lcd_yc == registers.lcd_y);
-			update_interrupt_flags();
-			co_await interruptible_cycles(cycle_scheduler::priority::write, 56); // short
+			// line 153 is weird
+			update_stat(lcd_mode::v_blank, 153);
+			co_await interruptible_cycles(cycle_scheduler::priority::write, 4);
 			if (!registers.lcd_control.lcd_enable)
 			{
 				continue;
 			}
 
-			registers.lcd_y = 0;              // interrupt first line early
-			registers.lcd_stat.coincidence = registers.lcd_yc == registers.lcd_y;
-			update_interrupt_flags();
-			co_await interruptible_cycles(cycle_scheduler::priority::write, 400);
+			registers.lcd_y = 0;
+			co_await interruptible_cycles(cycle_scheduler::priority::write, 4);
+			if (!registers.lcd_control.lcd_enable)
+			{
+				continue;
+			}
+
+			registers.lcd_stat.coincidence = 0;
+			update_stat(lcd_mode::v_blank, 0);
+			co_await interruptible_cycles(cycle_scheduler::priority::write, 456-8);
 		}
 	}
 
@@ -605,18 +616,21 @@ namespace coro_gb
 
 	void gpu::update_interrupt_flags()
 	{
+		registers.lcd_stat.coincidence = (registers.lcd_yc == registers.lcd_y);
+
 		bool old_stat_flag = stat_flag;
 		stat_flag = false;
 
-		if (registers.lcd_stat.mode == registers_t::lcd_mode::h_blank && registers.lcd_stat.hblank_ienable)
+		if (registers.lcd_stat.mode == lcd_mode::h_blank && registers.lcd_stat.hblank_ienable)
 		{
 			stat_flag = true;
 		}
-		else if (registers.lcd_stat.mode == registers_t::lcd_mode::v_blank && registers.lcd_stat.vblank_ienable)
+		// should we be triggering an oam interrupt at the start of vblank? Sources vary on this
+		else if (registers.lcd_stat.mode == lcd_mode::v_blank && registers.lcd_stat.vblank_ienable)
 		{
 			stat_flag = true;
 		}
-		else if (registers.lcd_stat.mode == registers_t::lcd_mode::oam_search && registers.lcd_stat.oam_ienable)
+		else if (registers.lcd_stat.mode == lcd_mode::oam_search && registers.lcd_stat.oam_ienable)
 		{
 			stat_flag = true;
 		}
@@ -627,7 +641,7 @@ namespace coro_gb
 
 		bool old_vblank_flag = vblank_flag;
 		vblank_flag = false;
-		if (registers.lcd_stat.mode == registers_t::lcd_mode::v_blank)
+		if (registers.lcd_stat.mode == lcd_mode::v_blank)
 		{
 			vblank_flag = true;
 		}
@@ -652,6 +666,38 @@ namespace coro_gb
 				memory.interrupts.cpu_wake.trigger();
 			}
 		}
+	}
+
+	void gpu::update_stat(lcd_mode mode, uint8_t y)
+	{
+		if (registers.lcd_y != y)
+		{
+			registers.lcd_y = y;
+			registers.lcd_stat.coincidence = 0;
+		}
+		switch (mode)
+		{
+		case lcd_mode::h_blank:
+			memory.set_mapping({ 0xFE00, 0xFEA0, (uint8_t*) oam.data(), (uint8_t*) oam.data() }); // restore access to oam
+			memory.set_mapping({ 0x8000, 0x9FFF, vram.data(), vram.data() });                     // restore access to vram
+			break;
+		case lcd_mode::v_blank:
+			break;
+		case lcd_mode::oam_search:
+			memory.set_mapping({ 0xFE00, 0xFEA0, nullptr, nullptr }); // block access to oam
+			break;
+		case lcd_mode::lcd_write:
+			memory.set_mapping({ 0x8000, 0x9FFF, nullptr, nullptr }); // block access to vram
+			break;
+		}
+		scheduler.queue(scheduler.get_cycle_counter() + 4, cycle_scheduler::unit::gpu, cycle_scheduler::priority::write,
+			[this, mode]() {
+				registers.lcd_stat.mode = mode;
+				if (mode != lcd_mode::lcd_write)
+				{
+					update_interrupt_flags();
+				}
+			});
 	}
 
 	single_future<void> gpu::run_dma()

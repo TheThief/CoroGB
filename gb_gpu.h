@@ -22,7 +22,6 @@ namespace coro_gb
 
 		bool is_screen_enabled() const;
 		const uint8_t* get_screen_buffer() const;
-		const uint32_t* get_palette() const;
 
 	protected:
 		cycle_scheduler::awaitable_cycles cycles(cycle_scheduler::priority priority, uint32_t wait);
@@ -61,9 +60,34 @@ namespace coro_gb
 		uint8_t on_register_read(uint16_t address) const;
 		void on_register_write(uint16_t address, uint8_t value);
 
+		enum class lcd_mode : uint8_t
+		{
+			// Mode 0 : The LCD controller is in the H - Blank period
+			// the CPU can access both the display RAM(8000h - 9FFFh) and OAM(FE00h - FE9Fh)
+			h_blank,
+			// Mode 1 : The LCD contoller is in the V - Blank period (or the display is disabled)
+			// the CPU can access both the display RAM(8000h - 9FFFh) and OAM(FE00h - FE9Fh)
+			v_blank,
+			// Mode 2 : The LCD controller is reading from OAM memory.
+			// The CPU <cannot> access OAM memory(FE00h - FE9Fh) during this period.
+			oam_search,
+			// Mode 3 : Transfering Data to LCD Driver.
+			// The LCD controller is reading from both OAM and VRAM,
+			// The CPU <cannot> access OAM and VRAM during this period.
+			// CGB Mode : Cannot access Palette Data(FF69, FF6B) either.
+			lcd_write,
+
+			// The following are typical when the display is enabled :
+			// Mode 2  2_____2_____2_____2_____2_____2___________________2____
+			// Mode 3  _33____33____33____33____33____33__________________3___
+			// Mode 0  ___000___000___000___000___000___000________________000
+			// Mode 1  ____________________________________11111111111111_____
+		};
+
 		bool stat_flag = false;
 		bool vblank_flag = false;
 		void update_interrupt_flags();
+		void update_stat(lcd_mode mode, uint8_t y);
 
 		single_future<void> run_dma();
 
@@ -73,13 +97,6 @@ namespace coro_gb
 		std::function<void()> display_callback;
 
 		std::array<uint8_t, 160 * 144> screen;
-		std::array<uint32_t, 4> palette =
-		{
-			0xFFe0f8d0,
-			0xFF88c070,
-			0xFF346856,
-			0xFF081820,
-		};
 
 		single_future<void> dma_task;
 
@@ -116,29 +133,6 @@ namespace coro_gb
 			} lcd_control;
 
 			// 0xFF41 - STAT - LCDC Status (R/W)
-			enum class lcd_mode : uint8_t
-			{
-				// Mode 0 : The LCD controller is in the H - Blank period
-				// the CPU can access both the display RAM(8000h - 9FFFh) and OAM(FE00h - FE9Fh)
-				h_blank,
-				// Mode 1 : The LCD contoller is in the V - Blank period (or the display is disabled)
-				// the CPU can access both the display RAM(8000h - 9FFFh) and OAM(FE00h - FE9Fh)
-				v_blank,
-				// Mode 2 : The LCD controller is reading from OAM memory.
-				// The CPU <cannot> access OAM memory(FE00h - FE9Fh) during this period.
-				oam_search,
-				// Mode 3 : Transfering Data to LCD Driver.
-				// The LCD controller is reading from both OAM and VRAM,
-				// The CPU <cannot> access OAM and VRAM during this period.
-				// CGB Mode : Cannot access Palette Data(FF69, FF6B) either.
-				lcd_write,
-
-				// The following are typical when the display is enabled :
-				// Mode 2  2_____2_____2_____2_____2_____2___________________2____
-				// Mode 3  _33____33____33____33____33____33__________________3___
-				// Mode 0  ___000___000___000___000___000___000________________000
-				// Mode 1  ____________________________________11111111111111_____
-			};
 			union lcd_stat_t
 			{
 				uint8_t u8 = 0x80;
@@ -200,10 +194,5 @@ namespace coro_gb
 	inline const uint8_t* gpu::get_screen_buffer() const
 	{
 		return screen.data();
-	}
-
-	inline const uint32_t* gpu::get_palette() const
-	{
-		return palette.data();
 	}
 }
