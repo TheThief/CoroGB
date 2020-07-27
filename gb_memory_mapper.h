@@ -22,9 +22,7 @@ namespace coro_gb
 		memory_mapper(cycle_scheduler& scheduler);
 
 		uint8_t read8(uint16_t address) const;
-		uint16_t read16(uint16_t address) const;
 		void write8(uint16_t address, uint8_t u8);
-		void write16(uint16_t address, uint16_t u16);
 
 		void load_boot_rom(std::filesystem::path boot_rom_path);
 

@@ -124,53 +124,6 @@ namespace coro_gb
 		}
 		return 0xFF;
 	}
-	uint16_t memory_mapper::read16(uint16_t address) const
-	{
-		// 16-bit reads have to be separated into 8-bit reads to preserve register functionality
-		uint16_t result = 0;
-		if (const mapping* mapping = find_mapping(address))
-		{
-			if (std::holds_alternative<uint8_t*>(mapping->read))
-			{
-				uint8_t* data = std::get<uint8_t*>(mapping->read);
-				if (data)
-				{
-					result = data[address - mapping->start_address];
-
-					if (address + 1 <= mapping->end_address)
-					{
-						result |= (uint16_t)data[(address - mapping->start_address) + 1] << 8;
-						return result;
-					}
-				}
-				else
-				{
-					result = 0xFF;
-					if (address + 1 <= mapping->end_address)
-					{
-						result |= (uint16_t)0xFF << 8;
-						return result;
-					}
-				}
-			}
-			else
-			{
-				result = std::get<1>(mapping->read)(address);
-				if (address + 1 <= mapping->end_address)
-				{
-					result |= (uint16_t)std::get<1>(mapping->read)(address + 1) << 8;
-					return result;
-				}
-			}
-		}
-		else
-		{
-			result = read8(address);
-		}
-
-		result |= (uint16_t)read8(address + 1) << 8;
-		return result;
-	}
 
 	void memory_mapper::write8(uint16_t address, uint8_t u8)
 	{
@@ -330,49 +283,6 @@ namespace coro_gb
 				interrupt_enable.u8 = u8;
 			}
 		}
-	}
-	void memory_mapper::write16(uint16_t address, uint16_t u16)
-	{
-		// 16-bit writes have to be separated into 8-bit writes to preserve register functionality
-		if (const mapping* mapping = find_mapping(address))
-		{
-			if (std::holds_alternative<uint8_t*>(mapping->write))
-			{
-				uint8_t* data = std::get<uint8_t*>(mapping->write);
-				if (data)
-				{
-					data[address - mapping->start_address] = u16 & 0xFF;
-
-					if (address + 1 <= mapping->end_address)
-					{
-						data[(address - mapping->start_address) + 1] = u16 >> 8;
-						return;
-					}
-				}
-				else
-				{
-					if (address + 1 <= mapping->end_address)
-					{
-						return; // write explicitly ignored by mapping
-					}
-				}
-			}
-			else
-			{
-				std::get<1>(mapping->write)(address, u16 & 0xFF);
-				if (address + 1 <= mapping->end_address)
-				{
-					std::get<1>(mapping->write)(address + 1, u16 >> 8);
-					return;
-				}
-			}
-		}
-		else
-		{
-			write8(address, u16 & 0xFF);
-		}
-
-		write8(address + 1, u16 >> 8);
 	}
 
 	void memory_mapper::load_boot_rom(std::filesystem::path boot_rom_path)

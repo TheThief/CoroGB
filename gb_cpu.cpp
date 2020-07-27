@@ -36,38 +36,37 @@ namespace coro_gb
 	write_wait(4); \
 	memory.write8(address, value);
 
-// todo - technically this should be split 4 cycles for each 8-bit read
-#define cpu_read16(var, cast, address) \
-	read_wait(8); \
-	var = static_cast<cast>(memory.read16(address));
+#define cpu_read16(var, address) \
+	cpu_read8(var, uint16_t, address); \
+	co_await cycles(cycle_scheduler::priority::read, 4); \
+	var |= static_cast<uint16_t>(memory.read8(address + 1)) << 8;
 
-// todo - technically this should be split 4 cycles for each 8-bit write
 #define cpu_write16(address, value) \
-	write_wait(8); \
-	memory.write16(address, value);
+	cpu_write8(address, (value) & 0xFF); \
+	co_await cycles(cycle_scheduler::priority::write, 4); \
+	memory.write8(address + 1, (value) >> 8);
 
 #define cpu_read8_pc(var, cast) \
 	cpu_read8(var, cast, registers.PC); \
 	++registers.PC;
 
-#define cpu_read16_pc(var, cast) \
-	cpu_read16(var, cast, registers.PC); \
+#define cpu_read16_pc(var) \
+	cpu_read16(var, registers.PC); \
 	registers.PC += 2;
 
 #define cpu_push16(value) \
-	registers.SP -= 2; \
+	registers.SP--; \
 	dummy_wait(4) \
 	write_wait(4); \
-	memory.write8(registers.SP + 1, (value) >> 8); \
+	memory.write8(registers.SP--, (value) >> 8); \
 	co_await cycles(cycle_scheduler::priority::write, 4); \
 	memory.write8(registers.SP, (value) & 0xFF);
 
 #define cpu_pop16(var) \
 	read_wait(4); \
-	var = memory.read8(registers.SP); \
+	var = memory.read8(registers.SP++); \
 	co_await cycles(cycle_scheduler::priority::read, 4); \
-	var |= (uint16_t)memory.read8(registers.SP + 1) << 8; \
-	registers.SP += 2;
+	var |= static_cast<uint16_t>(memory.read8(registers.SP++)) << 8;
 
 	single_future<void> cpu::run()
 	{
@@ -99,6 +98,16 @@ namespace coro_gb
 					registers.enable_interrupts = false;
 					registers.enable_interrupts_delay = false;
 
+					dummy_wait(2); // realign to 4-cycle clock
+					dummy_wait(4); // discard pipelined opcode read
+					dummy_wait(4); // pre-decrement SP
+					registers.SP--;
+					cpu_write8(registers.SP--, (registers.PC) >> 8);
+					read_wait(2);
+					triggered_interrupts = (memory.interrupt_flag & memory.interrupt_enable); // interrupts are re-checked
+					write_wait(2);
+					memory.write8(registers.SP, (registers.PC) & 0xFF);
+
 					// Bit 0: V-Blank  Interrupt Request (INT 40h)
 					// Bit 1: LCD STAT Interrupt Request (INT 48h)
 					// Bit 2: Timer    Interrupt Request (INT 50h)
@@ -125,14 +134,16 @@ namespace coro_gb
 						interrupt_dest = 0x58;
 						memory.interrupt_flag.serial = 0;
 					}
-					else //if (triggered_interrupts.Joypad)
+					else if (triggered_interrupts.joypad)
 					{
 						interrupt_dest = 0x60;
 						memory.interrupt_flag.joypad = 0;
 					}
+					else // interrupt bug!
+					{
+						interrupt_dest = 0x00;
+					}
 
-					dummy_wait(6); // realign to 4-cycle clock
-					cpu_push16(registers.PC);
 					registers.PC = interrupt_dest;
 					dummy_wait(2); // realign to T-cycle 2 ready for CPU to read opcode
 				}
@@ -185,7 +196,8 @@ namespace coro_gb
 
 							if (opcode == 0b00001000) // ld (a16), sp
 							{
-								cpu_read16_pc(uint16_t address, uint16_t);
+								uint16_t address;
+								cpu_read16_pc(address);
 								cpu_write16(address, registers.SP);
 								continue;
 							}
@@ -224,7 +236,8 @@ namespace coro_gb
 						case 0b001:
 							if ((opcode & 0b11001111) == 0b00000001) // ld r16, m16
 							{
-								cpu_read16_pc(uint16_t value, uint16_t);
+								uint16_t value;
+								cpu_read16_pc(value);
 
 								switch ((opcode >> 4) & 0b11)
 								{
@@ -904,7 +917,8 @@ namespace coro_gb
 						case 0b010:
 							if ((opcode & 0b11110111) == 0b11000010) // jp nz/z
 							{
-								cpu_read16_pc(uint16_t dest, uint16_t);
+								uint16_t dest;
+								cpu_read16_pc(dest);
 								if (registers.F_Zero == ((opcode >> 3) & 0b1))
 								{
 									registers.PC = dest;
@@ -915,7 +929,8 @@ namespace coro_gb
 
 							if ((opcode & 0b11110111) == 0b11010010) // jp nc/c
 							{
-								cpu_read16_pc(uint16_t dest, uint16_t);
+								uint16_t dest;
+								cpu_read16_pc(dest);
 								if (registers.F_Carry == ((opcode >> 3) & 0b1))
 								{
 									registers.PC = dest;
@@ -938,14 +953,16 @@ namespace coro_gb
 
 							if (opcode == 0b11101010) // ld (a16), A
 							{
-								cpu_read16_pc(uint16_t address, uint16_t);
+								uint16_t address;
+								cpu_read16_pc(address);
 								cpu_write8(address, registers.A);
 								continue;
 							}
 
 							if (opcode == 0b11111010) // ld A, (a16)
 							{
-								cpu_read16_pc(uint16_t address, uint16_t);
+								uint16_t address;
+								cpu_read16_pc(address);
 								cpu_read8(registers.A, uint8_t, address);
 								continue;
 							}
@@ -954,7 +971,8 @@ namespace coro_gb
 						case 0b011:
 							if (opcode == 0b11000011) // jp
 							{
-								cpu_read16_pc(uint16_t dest, uint16_t);
+								uint16_t dest;
+								cpu_read16_pc(dest);
 								registers.PC = dest;
 								dummy_wait(4);
 								continue;
@@ -978,7 +996,8 @@ namespace coro_gb
 						case 0b100:
 							if ((opcode & 0b11110111) == 0b11000100) // call nz/z
 							{
-								cpu_read16_pc(uint16_t dest, uint16_t);
+								uint16_t dest;
+								cpu_read16_pc(dest);
 								if (registers.F_Zero == ((opcode >> 3) & 0b1))
 								{
 									cpu_push16(registers.PC);
@@ -989,7 +1008,8 @@ namespace coro_gb
 
 							if ((opcode & 0b11110111) == 0b11010100) // call nc/c
 							{
-								cpu_read16_pc(uint16_t dest, uint16_t);
+								uint16_t dest;
+								cpu_read16_pc(dest);
 								if (registers.F_Carry == ((opcode >> 3) & 0b1))
 								{
 									cpu_push16(registers.PC);
@@ -1024,7 +1044,8 @@ namespace coro_gb
 
 							if (opcode == 0b11001101) // call a16
 							{
-								cpu_read16_pc(uint16_t dest, uint16_t);
+								uint16_t dest;
+								cpu_read16_pc(dest);
 								cpu_push16(registers.PC);
 								registers.PC = dest;
 								continue;

@@ -91,7 +91,7 @@ Notes:
 
 | Test                        | mooneye-gb | CoroGB |
 | --------------------------- | ---------- | ------ |
-| ie push                     | :+1:       | :x:    |
+| ie push                     | :+1:       | :+1:   |
 
 #### OAM DMA
 
@@ -107,9 +107,9 @@ Notes:
 | --------------------------- | ---------- | ------ |
 | hblank ly scx timing GS     | :+1:       | :x:    |
 | intr 1 2 timing GS          | :+1:       | :+1:   |
-| intr 2 0 timing             | :+1:       | :+1:   |
-| intr 2 mode0 timing         | :+1:       | :x:    |
-| intr 2 mode3 timing         | :+1:       | :x:    |
+| intr 2 0 timing             | :+1:       | :x:    |
+| intr 2 mode0 timing         | :+1:       | :+1:   |
+| intr 2 mode3 timing         | :+1:       | :+1:   |
 | intr 2 oam ok timing        | :+1:       | :x:    |
 | intr 2 mode0 timing sprites | :x:        | :x:    |
 | lcdon timing dmgABCmgbS     | :x:        | :x:    |
@@ -181,10 +181,47 @@ Notes:
 | --------------- | ---------- | ------ |
 | sprite priority | :+1:       | :+1:   |
 
+### Mealybug tests
+
+| Test                              | CoroGB |
+| --------------------------------- | ------ |
+| m3_wx_4_change                    | :x:    |
+| m3_wx_4_change_sprites            | :x:    |
+| m3_wx_5_change                    | :x:    |
+| m3_wx_6_change                    | :x:    |
+| m2_win_en_toggle                  | :x:    |
+| m3_bgp_change                     | :x:    |
+| m3_bgp_change_sprites             | :x:    |
+| m3_lcdc_bg_en_change              | :x:    |
+| m3_lcdc_bg_en_change2             | :x:    |
+| m3_lcdc_bg_map_change             | :x:    |
+| m3_lcdc_bg_map_change2            | :x:    |
+| m3_lcdc_obj_en_change             | :x:    |
+| m3_lcdc_obj_en_change_variant     | :x:    |
+| m3_lcdc_obj_size_change           | :x:    |
+| m3_lcdc_obj_size_change_scx       | :x:    |
+| m3_lcdc_tile_sel_change           | :x:    |
+| m3_lcdc_tile_sel_change2          | :x:    |
+| m3_lcdc_tile_sel_win_change       | :x:    |
+| m3_lcdc_tile_sel_win_change2      | :x:    |
+| m3_lcdc_win_en_change_multiple    | :x:    |
+| m3_lcdc_win_en_change_multiple_wx | :x:    |
+| m3_lcdc_win_map_change            | :x:    |
+| m3_lcdc_win_map_change2           | :x:    |
+| m3_obp0_change                    | :x:    |
+| m3_scx_high_5_bits                | :x:    |
+| m3_scx_high_5_bits_change2        | :x:    |
+| m3_scx_low_3_bits                 | :x:    |
+| m3_scy_change                     | :x:    |
+| m3_scy_change2                    | :x:    |
+| m3_window_timing                  | :x:    |
+| m3_window_timing_wx_0             | :x:    |
+
 ### Other tests
 
 | Test            | CoroGB |
 | --------------- | ------ |
+| acid2           | :+1:   |
 | dycptest2       | :x:    |
 | lyc             | :+1:   |
 | opus5           | :+1:   |
