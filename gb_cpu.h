@@ -13,23 +13,21 @@ namespace coro_gb
 
 	struct registers_t final
 	{
+		struct flags final
+		{
+			uint8_t padding    : 4;
+			uint8_t carry      : 1;
+			uint8_t half_carry : 1;
+			uint8_t subtract   : 1;
+			uint8_t zero       : 1;
+		};
+
 		union
 		{
 			uint16_t AF;
 			struct
 			{
-				union
-				{
-					uint8_t F;
-					struct
-					{
-						uint8_t F_Padding: 4;
-						uint8_t F_Carry : 1;
-						uint8_t F_HalfCarry : 1;
-						uint8_t F_Subtract : 1;
-						uint8_t F_Zero : 1;
-					};
-				};
+				flags F;
 				uint8_t A;
 			};
 		};

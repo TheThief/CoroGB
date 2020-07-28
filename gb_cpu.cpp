@@ -68,6 +68,37 @@ namespace coro_gb
 	co_await cycles(cycle_scheduler::priority::read, 4); \
 	var |= static_cast<uint16_t>(memory.read8(registers.SP++)) << 8;
 
+	struct alu_result
+	{
+		uint8_t value;
+		registers_t::flags flags;
+	};
+
+	__forceinline constexpr alu_result run_alu(uint8_t value_a, uint8_t value_b, bool subtract, bool carry_in)
+	{
+		if (subtract)
+		{
+			carry_in = !carry_in;
+			value_b = ~value_b;
+		}
+		alu_result result = {
+			.value = (uint8_t)(value_a + value_b + carry_in),
+			.flags = {
+				.padding = 0,
+				.carry = (value_a + value_b + carry_in > 0xFF),
+				.half_carry = ((value_a & 0x0F) + (value_b & 0x0F) + carry_in > 0x0F),
+				.subtract = subtract,
+				.zero = (result.value == 0),
+			}
+		};
+		if (subtract)
+		{
+			result.flags.carry = !result.flags.carry;
+			result.flags.half_carry = !result.flags.half_carry;
+		}
+		return result;
+	}
+
 	single_future<void> cpu::run()
 	{
 		bool halt_bug = false;
@@ -213,7 +244,7 @@ namespace coro_gb
 							if ((opcode & 0b11110111) == 0b00100000) // jr nz/z
 							{
 								cpu_read8_pc(int8_t offset, int8_t);
-								if (registers.F_Zero == ((opcode >> 3) & 0b1))
+								if (registers.F.zero == ((opcode >> 3) & 0b1))
 								{
 									registers.PC += offset;
 									dummy_wait(4);
@@ -224,7 +255,7 @@ namespace coro_gb
 							if ((opcode & 0b11110111) == 0b00110000) // jr nc/c
 							{
 								cpu_read8_pc(int8_t offset, int8_t);
-								if (registers.F_Carry == ((opcode >> 3) & 0b1))
+								if (registers.F.carry == ((opcode >> 3) & 0b1))
 								{
 									registers.PC += offset;
 									dummy_wait(4);
@@ -278,9 +309,9 @@ namespace coro_gb
 								const uint16_t original = registers.HL;
 								const uint32_t result32 = (uint32_t)original + value;
 								registers.HL = (uint16_t)result32;
-								registers.F_Carry = result32 > 0xFFFF;
-								registers.F_HalfCarry = ((original & 0x0FFF) + (value & 0x0FFF)) > 0x0FFF;
-								registers.F_Subtract = 0;
+								registers.F.carry = result32 > 0xFFFF;
+								registers.F.half_carry = ((original & 0x0FFF) + (value & 0x0FFF)) > 0x0FFF;
+								registers.F.subtract = 0;
 								continue;
 							}
 							break;
@@ -408,9 +439,9 @@ namespace coro_gb
 										value = ++registers.A;
 										break;
 								}
-								registers.F_HalfCarry = ((value & 0xF) == 0);
-								registers.F_Subtract = 0;
-								registers.F_Zero = (value == 0);
+								registers.F.half_carry = ((value & 0xF) == 0);
+								registers.F.subtract = 0;
+								registers.F.zero = (value == 0);
 								continue;
 							}
 							break;
@@ -448,9 +479,9 @@ namespace coro_gb
 										value = --registers.A;
 										break;
 								}
-								registers.F_HalfCarry = ((value & 0xF) == 0xF);
-								registers.F_Subtract = 1;
-								registers.F_Zero = (value == 0);
+								registers.F.half_carry = ((value & 0xF) == 0xF);
+								registers.F.subtract = 1;
+								registers.F.zero = (value == 0);
 								continue;
 							}
 							break;
@@ -497,95 +528,73 @@ namespace coro_gb
 								switch (opcode >> 3)
 								{
 									case 0b00:
-										registers.F_Carry = (registers.A & 0b10000000) != 0;
-										registers.A = (registers.A << 1) | registers.F_Carry;
+										registers.F.carry = (registers.A & 0b10000000) != 0;
+										registers.A = (registers.A << 1) | registers.F.carry;
 										break;
 									case 0b01:
-										registers.F_Carry = (registers.A & 0b00000001) != 0;
-										registers.A = (registers.A >> 1) | (registers.F_Carry << 7);
+										registers.F.carry = (registers.A & 0b00000001) != 0;
+										registers.A = (registers.A >> 1) | (registers.F.carry << 7);
 										break;
 									case 0b10:
 									{
 										bool new_carry = (registers.A & 0b10000000) != 0;
-										registers.A = (registers.A << 1) | registers.F_Carry;
-										registers.F_Carry = new_carry;
+										registers.A = (registers.A << 1) | registers.F.carry;
+										registers.F.carry = new_carry;
 									}
 									break;
 									case 0b11:
 									{
 										bool new_carry = (registers.A & 0b00000001) != 0;
-										registers.A = (registers.A >> 1) | (registers.F_Carry << 7);
-										registers.F_Carry = new_carry;
+										registers.A = (registers.A >> 1) | (registers.F.carry << 7);
+										registers.F.carry = new_carry;
 									}
 									break;
 								}
 
-								registers.F_HalfCarry = 0;
-								registers.F_Subtract = 0;
-								registers.F_Zero = 0;
+								registers.F.half_carry = 0;
+								registers.F.subtract = 0;
+								registers.F.zero = 0;
 								continue;
 							}
 							if (opcode == 0b00100111) // DAA
 							{
-								uint16_t result16 = registers.A;
-
-								if (registers.F_Subtract)
+								uint8_t correction = 0;
+								if (registers.F.half_carry ||
+									(!registers.F.subtract && (registers.A & 0x0f) > 0x09))
 								{
-									if (registers.F_HalfCarry)
-									{
-										result16 -= 0x06;
-										if (!registers.F_Carry)
-										{
-											result16 &= 0xFF;
-										}
-									}
+									correction |= 0x06;
 								}
-								else
+								if (registers.F.carry ||
+									(!registers.F.subtract && (registers.A & 0xff) > 0x99))
 								{
-									if (registers.F_HalfCarry || (result16 & 0x0F) >= 0xA)
-									{
-										result16 += 0x06;
-									}
+									correction |= 0x60;
+									registers.F.carry = true;
 								}
-								if (registers.F_Subtract)
-								{
-									if (registers.F_Carry)
-									{
-										result16 -= 0x60;
-									}
-								}
-								else
-								{
-									if (registers.F_Carry || result16 >= 0xA0)
-									{
-										result16 += 0x60;
-									}
-								}
-								registers.A = (uint8_t)result16;
-								registers.F_Carry |= result16 > 0xFF;
-								registers.F_HalfCarry = 0;
-								registers.F_Zero = (registers.A == 0);
+								alu_result result = run_alu(registers.A, correction, registers.F.subtract, false);
+								registers.A = result.value;
+								registers.F.half_carry  = 0;
+								registers.F.zero = result.flags.zero;
 								continue;
 							}
 							if (opcode == 0b00101111) // CPL
 							{
 								registers.A = ~registers.A;
-								registers.F_HalfCarry = 1;
-								registers.F_Subtract = 1;
+								registers.F.half_carry = 1;
+								registers.F.subtract = 1;
 								continue;
 							}
 							if (opcode == 0b00110111) // SCF
 							{
-								registers.F_Carry = 1;
-								registers.F_HalfCarry = 0;
-								registers.F_Subtract = 0;
+								registers.F.carry = 1;
+								registers.F.half_carry = 0;
+								registers.F.subtract = 0;
 								continue;
 							}
 							if (opcode == 0b00111111) // CCF
 							{
-								registers.F_Carry = !registers.F_Carry;
-								registers.F_HalfCarry = 0;
-								registers.F_Subtract = 0;
+								registers.F.carry = !registers.F.carry;
+								registers.F.half_carry = 0;
+								registers.F.subtract = 0;
 								continue;
 							}
 							break;
@@ -689,7 +698,7 @@ namespace coro_gb
 					break;
 				case 0b10:
 				{
-					uint16_t value;
+					uint8_t value;
 
 					switch (opcode & 0b111)
 					{
@@ -719,76 +728,70 @@ namespace coro_gb
 							break;
 					}
 
-					const uint8_t original = registers.A;
 					switch ((opcode >> 3) & 0b111)
 					{
 						case 0b001: // adc a,r8
 						{
-							const uint8_t in_carry = registers.F_Carry;
-							const uint16_t result16 = (uint16_t)original + value + in_carry;
-							registers.A = (uint8_t)result16;
-							registers.F_Carry = (result16 > 0xFF);
-							registers.F_HalfCarry = (((original & 0x0F) + (value & 0x0F) + in_carry) > 0xF);
-							registers.F_Subtract = 0;
+							alu_result result = run_alu(registers.A, value, false, registers.F.carry);
+							registers.A = result.value;
+							registers.F = result.flags;
 							break;
 						}
 						case 0b000: // add a,r8
 						{
-							const uint16_t result16 = (uint16_t)original + value;
-							registers.A = (uint8_t)result16;
-							registers.F_Carry = (result16 > 0xFF);
-							registers.F_HalfCarry = (((original & 0x0F) + (value & 0x0F)) > 0xF);
-							registers.F_Subtract = 0;
+							alu_result result = run_alu(registers.A, value, false, false);
+							registers.A = result.value;
+							registers.F = result.flags;
 							break;
 						}
 						case 0b011: // sbc a,r8
 						{
-							const uint8_t in_carry = registers.F_Carry;
-							const uint16_t result16 = (uint16_t)original - value - in_carry;
-							registers.A = (uint8_t)result16;
-							registers.F_Carry = (result16 > 0xFF);
-							registers.F_HalfCarry = (((int16_t)(original & 0x0F) - (value & 0x0F) - in_carry) < 0);
-							registers.F_Subtract = 1;
+							alu_result result = run_alu(registers.A, value, true, registers.F.carry);
+							registers.A = result.value;
+							registers.F = result.flags;
 							break;
 						}
 						case 0b010: // sub a,r8
 						{
-							const uint16_t result16 = (uint16_t)original - value;
-							registers.A = (uint8_t)result16;
-							registers.F_Carry = (result16 > 0xFF);
-							registers.F_HalfCarry = (((int16_t)(original & 0x0F) - (value & 0x0F)) < 0);
-							registers.F_Subtract = 1;
+							alu_result result = run_alu(registers.A, value, true, false);
+							registers.A = result.value;
+							registers.F = result.flags;
 							break;
 						}
 						case 0b100: // and a,r8
+						{
 							registers.A &= value;
-							registers.F_Carry = 0;
-							registers.F_HalfCarry = 1;
-							registers.F_Subtract = 0;
+							registers.F.carry = 0;
+							registers.F.half_carry = 1;
+							registers.F.subtract = 0;
+							registers.F.zero = (registers.A == 0);
 							break;
+						}
 						case 0b101: // xor a,r8
+						{
 							registers.A ^= value;
-							registers.F_Carry = 0;
-							registers.F_HalfCarry = 0;
-							registers.F_Subtract = 0;
+							registers.F.carry = 0;
+							registers.F.half_carry = 0;
+							registers.F.subtract = 0;
+							registers.F.zero = (registers.A == 0);
 							break;
+						}
 						case 0b110: // or a,r8
+						{
 							registers.A |= value;
-							registers.F_Carry = 0;
-							registers.F_HalfCarry = 0;
-							registers.F_Subtract = 0;
+							registers.F.carry = 0;
+							registers.F.half_carry = 0;
+							registers.F.subtract = 0;
+							registers.F.zero = (registers.A == 0);
 							break;
+						}
 						case 0b111: // cp a,r8
 						{
-							const uint16_t result16 = (uint16_t)original - value;
-							registers.F_Carry = (result16 > 0xFF);
-							registers.F_HalfCarry = (((int16_t)(original & 0x0F) - (value & 0x0F)) < 0);
-							registers.F_Subtract = 1;
-							registers.F_Zero = ((uint8_t)result16 == 0);
-							continue;
+							alu_result result = run_alu(registers.A, value, true, false);
+							registers.F = result.flags;
+							break;
 						}
 					}
-					registers.F_Zero = (registers.A == 0);
 					continue;
 				}
 				case 0b11:
@@ -799,7 +802,7 @@ namespace coro_gb
 							{
 								// conditional ret has an extra machine cycle delay while it checks the condition
 								dummy_wait(4);
-								if (registers.F_Zero == ((opcode >> 3) & 0b1))
+								if (registers.F.zero == ((opcode >> 3) & 0b1))
 								{
 									cpu_pop16(registers.PC);
 									dummy_wait(4);
@@ -811,7 +814,7 @@ namespace coro_gb
 							{
 								// conditional ret has an extra machine cycle delay while it checks the condition
 								dummy_wait(4);
-								if (registers.F_Carry == ((opcode >> 3) & 0b1))
+								if (registers.F.carry == ((opcode >> 3) & 0b1))
 								{
 									cpu_pop16(registers.PC);
 									dummy_wait(4);
@@ -838,10 +841,10 @@ namespace coro_gb
 								cpu_read8_pc(const int8_t value, int8_t);
 								const uint16_t original = registers.SP;
 								registers.SP = original + value;
-								registers.F_Carry = ((original & 0xFF) + (value & 0xFF)) > 0xFF;
-								registers.F_HalfCarry = ((original & 0x0F) + (value & 0x0F)) > 0x0F;
-								registers.F_Subtract = 0;
-								registers.F_Zero = 0;
+								registers.F.carry = ((original & 0xFF) + (value & 0xFF)) > 0xFF;
+								registers.F.half_carry = ((original & 0x0F) + (value & 0x0F)) > 0x0F;
+								registers.F.subtract = 0;
+								registers.F.zero = 0;
 								dummy_wait(8);
 								continue;
 							}
@@ -852,10 +855,10 @@ namespace coro_gb
 								const uint16_t original = registers.SP;
 								const uint32_t result32 = (uint32_t)original + value;
 								registers.HL = (uint16_t)result32;
-								registers.F_Carry = ((original & 0xFF) + (value & 0xFF)) > 0xFF;
-								registers.F_HalfCarry = ((original & 0x0F) + (value & 0x0F)) > 0x0F;
-								registers.F_Subtract = 0;
-								registers.F_Zero = 0;
+								registers.F.carry = ((original & 0xFF) + (value & 0xFF)) > 0xFF;
+								registers.F.half_carry = ((original & 0x0F) + (value & 0x0F)) > 0x0F;
+								registers.F.subtract = 0;
+								registers.F.zero = 0;
 								dummy_wait(4);
 								continue;
 							}
@@ -879,7 +882,7 @@ namespace coro_gb
 										break;
 									case 3:
 										registers.AF = value;
-										registers.F_Padding = 0;
+										registers.F.padding = 0;
 										break;
 								}
 								continue;
@@ -919,7 +922,7 @@ namespace coro_gb
 							{
 								uint16_t dest;
 								cpu_read16_pc(dest);
-								if (registers.F_Zero == ((opcode >> 3) & 0b1))
+								if (registers.F.zero == ((opcode >> 3) & 0b1))
 								{
 									registers.PC = dest;
 									dummy_wait(4);
@@ -931,7 +934,7 @@ namespace coro_gb
 							{
 								uint16_t dest;
 								cpu_read16_pc(dest);
-								if (registers.F_Carry == ((opcode >> 3) & 0b1))
+								if (registers.F.carry == ((opcode >> 3) & 0b1))
 								{
 									registers.PC = dest;
 									dummy_wait(4);
@@ -998,7 +1001,7 @@ namespace coro_gb
 							{
 								uint16_t dest;
 								cpu_read16_pc(dest);
-								if (registers.F_Zero == ((opcode >> 3) & 0b1))
+								if (registers.F.zero == ((opcode >> 3) & 0b1))
 								{
 									cpu_push16(registers.PC);
 									registers.PC = dest;
@@ -1010,7 +1013,7 @@ namespace coro_gb
 							{
 								uint16_t dest;
 								cpu_read16_pc(dest);
-								if (registers.F_Carry == ((opcode >> 3) & 0b1))
+								if (registers.F.carry == ((opcode >> 3) & 0b1))
 								{
 									cpu_push16(registers.PC);
 									registers.PC = dest;
@@ -1056,76 +1059,70 @@ namespace coro_gb
 						{
 							cpu_read8_pc(uint8_t value, uint8_t);
 
-							const uint8_t original = registers.A;
 							switch ((opcode >> 3) & 0b111)
 							{
 								case 0b001: // adc a,d8
 								{
-									const uint8_t in_carry = registers.F_Carry;
-									const uint16_t result16 = (uint16_t)original + value + in_carry;
-									registers.A = (uint8_t)result16;
-									registers.F_Carry = (result16 > 0xFF);
-									registers.F_HalfCarry = (((original & 0x0F) + (value & 0x0F) + in_carry) > 0xF);
-									registers.F_Subtract = 0;
+									alu_result result = run_alu(registers.A, value, false, registers.F.carry);
+									registers.A = result.value;
+									registers.F = result.flags;
 									break;
 								}
 								case 0b000: // add a,d8
 								{
-									const uint16_t result16 = (uint16_t)original + value;
-									registers.A = (uint8_t)result16;
-									registers.F_Carry = (result16 > 0xFF);
-									registers.F_HalfCarry = (((original & 0x0F) + (value & 0x0F)) > 0xF);
-									registers.F_Subtract = 0;
+									alu_result result = run_alu(registers.A, value, false, false);
+									registers.A = result.value;
+									registers.F = result.flags;
 									break;
 								}
 								case 0b011: // sbc a,d8
 								{
-									const uint8_t in_carry = registers.F_Carry;
-									const uint16_t result16 = (uint16_t)original - value - in_carry;
-									registers.A = (uint8_t)result16;
-									registers.F_Carry = (result16 > 0xFF);
-									registers.F_HalfCarry = (((int16_t)(original & 0x0F) - (value & 0x0F) - in_carry) < 0);
-									registers.F_Subtract = 1;
+									alu_result result = run_alu(registers.A, value, true, registers.F.carry);
+									registers.A = result.value;
+									registers.F = result.flags;
 									break;
 								}
 								case 0b010: // sub a,d8
 								{
-									const uint16_t result16 = (uint16_t)original - value;
-									registers.A = (uint8_t)result16;
-									registers.F_Carry = (result16 > 0xFF);
-									registers.F_HalfCarry = (((int16_t)(original & 0x0F) - (value & 0x0F)) < 0);
-									registers.F_Subtract = 1;
+									alu_result result = run_alu(registers.A, value, true, false);
+									registers.A = result.value;
+									registers.F = result.flags;
 									break;
 								}
 								case 0b100: // and a,d8
+								{
 									registers.A &= value;
-									registers.F_Carry = 0;
-									registers.F_HalfCarry = 1;
-									registers.F_Subtract = 0;
+									registers.F.carry = 0;
+									registers.F.half_carry = 1;
+									registers.F.subtract = 0;
+									registers.F.zero = (registers.A == 0);
 									break;
+								}
 								case 0b101: // xor a,d8
+								{
 									registers.A ^= value;
-									registers.F_Carry = 0;
-									registers.F_HalfCarry = 0;
-									registers.F_Subtract = 0;
+									registers.F.carry = 0;
+									registers.F.half_carry = 0;
+									registers.F.subtract = 0;
+									registers.F.zero = (registers.A == 0);
 									break;
+								}
 								case 0b110: // or a,d8
+								{
 									registers.A |= value;
-									registers.F_Carry = 0;
-									registers.F_HalfCarry = 0;
-									registers.F_Subtract = 0;
+									registers.F.carry = 0;
+									registers.F.half_carry = 0;
+									registers.F.subtract = 0;
+									registers.F.zero = (registers.A == 0);
 									break;
+								}
 								case 0b111: // cp a,d8
 								{
-									const uint16_t result16 = (uint16_t)original - value;
-									registers.F_Carry = (result16 > 0xFF);
-									registers.F_HalfCarry = (((int16_t)(original & 0x0F) - (value & 0x0F)) < 0);
-									registers.F_Subtract = 1;
-									registers.F_Zero = ((uint8_t)result16 == 0);
-									continue;
+									alu_result result = run_alu(registers.A, value, true, false);
+									registers.F = result.flags;
+									break;
 								}
 							}
-							registers.F_Zero = (registers.A == 0);
 							continue;
 						}
 						case 0b111: // rst
@@ -1180,48 +1177,48 @@ namespace coro_gb
 						switch ((bitop >> 3) & 0b111)
 						{
 							case 0b000:
-								registers.F_Carry = (value & 0b10000000) != 0;
-								value = (value << 1) | registers.F_Carry;
+								registers.F.carry = (value & 0b10000000) != 0;
+								value = (value << 1) | registers.F.carry;
 								break;
 							case 0b001:
-								registers.F_Carry = (value & 0b00000001) != 0;
-								value = (value >> 1) | (registers.F_Carry << 7);
+								registers.F.carry = (value & 0b00000001) != 0;
+								value = (value >> 1) | (registers.F.carry << 7);
 								break;
 							case 0b010:
 							{
 								bool new_carry = (value & 0b10000000) != 0;
-								value = (value << 1) | registers.F_Carry;
-								registers.F_Carry = new_carry;
+								value = (value << 1) | registers.F.carry;
+								registers.F.carry = new_carry;
 								break;
 							}
 							case 0b011:
 							{
 								bool new_carry = (value & 0b00000001) != 0;
-								value = (value >> 1) | (registers.F_Carry << 7);
-								registers.F_Carry = new_carry;
+								value = (value >> 1) | (registers.F.carry << 7);
+								registers.F.carry = new_carry;
 								break;
 							}
 							case 0b100:
-								registers.F_Carry = (value & 0b10000000) != 0;
+								registers.F.carry = (value & 0b10000000) != 0;
 								value = (value << 1);
 								break;
 							case 0b101:
-								registers.F_Carry = (value & 0b00000001) != 0;
+								registers.F.carry = (value & 0b00000001) != 0;
 								value = (value & 0b10000000) | (value >> 1);
 								break;
 							case 0b110:
-								registers.F_Carry = 0;
+								registers.F.carry = 0;
 								value = (value << 4) | (value >> 4);
 								break;
 							case 0b111:
-								registers.F_Carry = (value & 0b00000001) != 0;
+								registers.F.carry = (value & 0b00000001) != 0;
 								value = (value >> 1);
 								break;
 						}
 
-						registers.F_HalfCarry = 0;
-						registers.F_Subtract = 0;
-						registers.F_Zero = (value == 0);
+						registers.F.half_carry = 0;
+						registers.F.subtract = 0;
+						registers.F.zero = (value == 0);
 
 						switch (bitop & 0b111)
 						{
@@ -1259,35 +1256,35 @@ namespace coro_gb
 						switch (bitop & 0b111)
 						{
 							case 0:
-								registers.F_Zero = !(registers.B & value);
+								registers.F.zero = !(registers.B & value);
 								break;
 							case 1:
-								registers.F_Zero = !(registers.C & value);
+								registers.F.zero = !(registers.C & value);
 								break;
 							case 2:
-								registers.F_Zero = !(registers.D & value);
+								registers.F.zero = !(registers.D & value);
 								break;
 							case 3:
-								registers.F_Zero = !(registers.E & value);
+								registers.F.zero = !(registers.E & value);
 								break;
 							case 4:
-								registers.F_Zero = !(registers.H & value);
+								registers.F.zero = !(registers.H & value);
 								break;
 							case 5:
-								registers.F_Zero = !(registers.L & value);
+								registers.F.zero = !(registers.L & value);
 								break;
 							case 6:
 							{
 								cpu_read8(const uint8_t comparand, uint8_t, registers.HL);
-								registers.F_Zero = !(comparand & value);
+								registers.F.zero = !(comparand & value);
 								break;
 							}
 							case 7:
-								registers.F_Zero = !(registers.A & value);
+								registers.F.zero = !(registers.A & value);
 								break;
 						}
-						registers.F_HalfCarry = 1; // why?
-						registers.F_Subtract = 0;
+						registers.F.half_carry = 1; // why?
+						registers.F.subtract = 0;
 						continue;
 					}
 					case 0b10: // bit reset
