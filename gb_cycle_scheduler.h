@@ -1,15 +1,9 @@
 #pragma once
 
-#include <experimental/coroutine>
+#include <coroutine>
 
 #include "gb_interrupt.h"
 #include "utils.h"
-
-namespace std
-{
-	using experimental::suspend_always;
-	using experimental::coroutine_handle;
-}
 
 namespace coro_gb
 {
@@ -36,11 +30,11 @@ namespace coro_gb
 
 		struct awaitable_cycles_base
 		{
-			awaitable_cycles_base(cycle_scheduler& scheduler, cycle_scheduler::unit unit, cycle_scheduler::priority priority, uint32_t wait);
+			awaitable_cycles_base(cycle_scheduler& scheduler, cycle_scheduler::unit unit, cycle_scheduler::priority priority, uint32_t wait) noexcept;
 
-			bool await_ready();
-			void await_resume();
-			void await_suspend(std::coroutine_handle<> handle);
+			bool await_ready() noexcept;
+			void await_resume() noexcept;
+			void await_suspend(std::coroutine_handle<> handle) noexcept;
 
 		protected:
 			cycle_scheduler& scheduler;
@@ -51,44 +45,44 @@ namespace coro_gb
 
 		struct awaitable_cycles final : protected awaitable_cycles_base
 		{
-			awaitable_cycles(cycle_scheduler& scheduler, cycle_scheduler::unit unit, cycle_scheduler::priority priority, uint32_t wait);
+			awaitable_cycles(cycle_scheduler& scheduler, cycle_scheduler::unit unit, cycle_scheduler::priority priority, uint32_t wait) noexcept;
 
 			using awaitable_cycles_base::await_ready;
 			using awaitable_cycles_base::await_resume;
 			using awaitable_cycles_base::await_suspend;
 		};
 
-		awaitable_cycles cycles(unit unit, priority priority, uint32_t wait)
+		awaitable_cycles cycles(unit unit, priority priority, uint32_t wait) noexcept
 		{
 			return { *this, unit, priority, wait };
 		}
 
 		struct awaitable_cycles_interruptible final : protected awaitable_cycles_base
 		{
-			awaitable_cycles_interruptible(cycle_scheduler& scheduler, interrupt& awaited_interrupt, cycle_scheduler::unit unit, cycle_scheduler::priority priority, uint32_t wait);
+			awaitable_cycles_interruptible(cycle_scheduler& scheduler, interrupt& awaited_interrupt, cycle_scheduler::unit unit, cycle_scheduler::priority priority, uint32_t wait) noexcept;
 
-			bool await_ready();
-			bool await_resume(); // returns true if interrupted
-			void await_suspend(std::coroutine_handle<> handle);
+			bool await_ready() noexcept;
+			bool await_resume() noexcept; // returns true if interrupted
+			void await_suspend(std::coroutine_handle<> handle) noexcept;
 
 		protected:
 			interrupt& awaited_interrupt;
 			std::coroutine_handle<> suspended_coroutine;
 		};
 
-		awaitable_cycles_interruptible interruptible_cycles(interrupt& interrupt, unit unit, priority priority, uint32_t wait)
+		awaitable_cycles_interruptible interruptible_cycles(interrupt& interrupt, unit unit, priority priority, uint32_t wait) noexcept
 		{
 			return awaitable_cycles_interruptible{ *this, interrupt, unit, priority, wait };
 		}
 
-		uint32_t get_cycle_counter() const
+		uint32_t get_cycle_counter() const noexcept
 		{
 			return cycle_counter;
 		}
 
-		void queue(uint32_t at, unit unit, priority priority, std::function<void()> fn);
+		void queue(uint32_t at, unit unit, priority priority, std::function<void()> fn) noexcept;
 
-		void tick(uint32_t num_cycles);
+		void tick(uint32_t num_cycles) noexcept;
 
 	private:
 		struct cycle_wait final
@@ -97,7 +91,7 @@ namespace coro_gb
 			uint16_t priority;
 			std::function<void()> queued_function;
 
-			friend bool operator==(const cycle_wait& lhs, const cycle_wait& rhs)
+			friend bool operator==(const cycle_wait& lhs, const cycle_wait& rhs) noexcept
 			{
 				return std::make_tuple(lhs.wait_until, lhs.priority)
 					== std::make_tuple(rhs.wait_until, rhs.priority);
@@ -106,12 +100,12 @@ namespace coro_gb
 
 		struct cycle_comparator final
 		{
-			cycle_comparator(const cycle_scheduler& scheduler) :
+			cycle_comparator(const cycle_scheduler& scheduler) noexcept :
 				scheduler{ &scheduler }
 			{
 			}
 
-			bool operator ()(const cycle_wait& lhs, const cycle_wait& rhs) const
+			bool operator ()(const cycle_wait& lhs, const cycle_wait& rhs) const noexcept
 			{
 				// ordered by closest to the present time, then by priority
 				return std::make_tuple((int32_t)(lhs.wait_until - scheduler->cycle_counter), lhs.priority)
@@ -134,7 +128,7 @@ namespace coro_gb
 
 	////////////////////////////////////////////////////////////////
 
-	inline cycle_scheduler::awaitable_cycles_base::awaitable_cycles_base(cycle_scheduler& scheduler, cycle_scheduler::unit unit, cycle_scheduler::priority priority, uint32_t wait) :
+	inline cycle_scheduler::awaitable_cycles_base::awaitable_cycles_base(cycle_scheduler& scheduler, cycle_scheduler::unit unit, cycle_scheduler::priority priority, uint32_t wait) noexcept :
 		scheduler{ scheduler },
 		wait_until{ scheduler.cycle_counter + wait },
 		unit{ unit },
@@ -142,7 +136,7 @@ namespace coro_gb
 	{
 	}
 
-	inline bool cycle_scheduler::awaitable_cycles_base::await_ready()
+	inline bool cycle_scheduler::awaitable_cycles_base::await_ready() noexcept
 	{
 		if (scheduler.current_unit == unit &&
 			std::make_tuple((int32_t)(wait_until - scheduler.cycle_counter), ((uint16_t)priority << 8 | (uint8_t)unit))
@@ -154,7 +148,7 @@ namespace coro_gb
 		return false;
 	}
 
-	inline void cycle_scheduler::awaitable_cycles_base::await_resume()
+	inline void cycle_scheduler::awaitable_cycles_base::await_resume() noexcept
 	{
 		//scheduler.cycle_counter = wait_until;
 		scheduler.current_unit = unit;
@@ -162,25 +156,25 @@ namespace coro_gb
 
 	////////////////////////////////////////////////////////////////
 
-	inline cycle_scheduler::awaitable_cycles::awaitable_cycles(cycle_scheduler& scheduler, cycle_scheduler::unit unit, cycle_scheduler::priority priority, uint32_t wait) :
+	inline cycle_scheduler::awaitable_cycles::awaitable_cycles(cycle_scheduler& scheduler, cycle_scheduler::unit unit, cycle_scheduler::priority priority, uint32_t wait) noexcept :
 		awaitable_cycles_base{ scheduler, unit, priority, wait }
 	{
 	}
 
 	////////////////////////////////////////////////////////////////
 
-	inline cycle_scheduler::awaitable_cycles_interruptible::awaitable_cycles_interruptible(cycle_scheduler& scheduler, interrupt& awaited_interrupt, cycle_scheduler::unit unit, cycle_scheduler::priority priority, uint32_t wait)
+	inline cycle_scheduler::awaitable_cycles_interruptible::awaitable_cycles_interruptible(cycle_scheduler& scheduler, interrupt& awaited_interrupt, cycle_scheduler::unit unit, cycle_scheduler::priority priority, uint32_t wait) noexcept
 		: awaitable_cycles_base{ scheduler, unit, priority, wait }
 		, awaited_interrupt{ awaited_interrupt }
 	{
 	}
 
-	inline bool cycle_scheduler::awaitable_cycles_interruptible::await_ready()
+	inline bool cycle_scheduler::awaitable_cycles_interruptible::await_ready() noexcept
 	{
 		return awaitable_cycles_base::await_ready() || awaited_interrupt.await_ready();
 	}
 
-	inline void cycle_scheduler::awaitable_cycles_interruptible::await_suspend(std::coroutine_handle<> handle)
+	inline void cycle_scheduler::awaitable_cycles_interruptible::await_suspend(std::coroutine_handle<> handle) noexcept
 	{
 		awaitable_cycles_base::await_suspend(handle);
 		awaited_interrupt.await_suspend(handle);

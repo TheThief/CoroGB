@@ -182,6 +182,7 @@ int APIENTRY wWinMain(
 	{
 		std::wstring_convert<std::codecvt_utf8_utf16<wchar_t>> converter;
 		MessageBoxW(NULL, converter.from_bytes(ex.what()).c_str(), L"ERROR", MB_ICONERROR | MB_OK);
+#pragma warning( suppress : 4297 )
 		throw;
 	}
 }

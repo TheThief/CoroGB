@@ -1,14 +1,7 @@
 #pragma once
 
-#include <experimental/coroutine>
+#include <coroutine>
 #include <optional>
-
-namespace std
-{
-	using experimental::suspend_always;
-	using experimental::suspend_never;
-	using experimental::coroutine_handle;
-}
 
 template<typename T>
 struct single_future;
@@ -16,56 +9,74 @@ struct single_future;
 template<typename T>
 struct [[nodiscard]] single_future final
 {
-	struct promise final
+	struct promise_t final
 	{
-		single_future<T> get_return_object()
+#if _DEBUG
+		~promise_t() noexcept
+		{
+			value = std::nullopt;
+		}
+#endif
+
+		single_future<T> get_return_object() noexcept
 		{
 			return {*this};
 		}
-		auto initial_suspend() { return std::suspend_never(); }
-		auto final_suspend()
+		auto initial_suspend() noexcept
+		{
+			return std::suspend_never();
+		}
+		auto final_suspend() noexcept
 		{
 			struct chain
 			{
 				std::coroutine_handle<> handle;
 
-				bool await_ready() { return false; }
+				bool await_ready() noexcept
+				{
+					return false;
+				}
 
-				void await_suspend(std::coroutine_handle<>)
+				std::coroutine_handle<> await_suspend(std::coroutine_handle<>) noexcept
 				{
 					if (handle)
 					{
-						handle.resume();
+						return handle;
 					}
+					return std::noop_coroutine();
 				}
 
-				void await_resume() {}
+				void await_resume() noexcept
+				{
+				}
 			};
-			return chain{ future->then };
+			return chain{ then };
 		}
 
 		template<typename T>
-		void return_value(T&& value)
+		void return_value(T&& value) noexcept
 		{
-			future->value = std::forward<T>(value);
+			this->value = std::forward<T>(value);
 		}
 
-		void unhandled_exception()
+		void unhandled_exception() noexcept
 		{
-			future->exception = std::current_exception();
-			future->value = std::nullopt;
+			exception = std::current_exception();
+			value = std::nullopt;
 		}
 
 	private:
-		single_future<T>* future;
+		std::coroutine_handle<> then{ nullptr };
+		std::exception_ptr exception{ nullptr };
+		std::optional<T> value{ std::nullopt };
 
 		friend single_future<T>;
 	};
 
-	using promise_type = promise;
+	using promise_type = promise_t;
 	using handle_type = std::coroutine_handle<promise_type>;
 
-	bool await_ready()
+	bool await_ready() noexcept
 	{
 		return handle.done();
 	}
@@ -73,71 +84,62 @@ struct [[nodiscard]] single_future final
 	{
 		return get();
 	}
-	void await_suspend(std::coroutine_handle<> handle)
+	void await_suspend(std::coroutine_handle<> handle) noexcept
 	{
-		then = handle;
+		promise->then = handle;
 	}
 
-	single_future() = default;
-	single_future(promise_type& promise)
+	single_future() noexcept = default;
+	single_future(promise_type& promise) noexcept
 		: promise{ &promise }
 		, handle{ std::coroutine_handle<promise_type>::from_promise(promise) }
 	{
-		promise.future = this;
 	}
 	single_future(const single_future& rhs) = delete;
-	single_future(single_future&& rhs)
+	single_future(single_future&& rhs) noexcept
 		: promise{ rhs.promise }
 		, handle{ std::move(rhs.handle) }
-		, then{ rhs.then }
-		, exception{ std::move(rhs.exception) }
-		, value{ std::move(rhs.value) }
 	{
 		rhs.handle = nullptr;
-		if (promise)
-		{
-			promise->future = this;
-		}
 	}
 	single_future& operator=(const single_future& rhs) = delete;
-	single_future& operator=(single_future&& rhs)
+	single_future& operator=(single_future&& rhs) noexcept
 	{
 		promise = rhs.promise;
 		handle = std::move(rhs.handle);
-		then = rhs.then;
-		exception = std::move(rhs.exception);
-		value = std::move(rhs.value);
 
+		rhs.promise = nullptr;
 		rhs.handle = nullptr;
-		if (promise)
-		{
-			promise->future = this;
-		}
 		return *this;
 	}
-	~single_future()
+	~single_future() noexcept
 	{
 		if (handle) handle.destroy();
 	}
-	bool is_ready() const
+	bool is_ready() const noexcept
 	{
 		return handle.done();
 	}
 	T get()
 	{
+		auto exception = std::move(promise->exception);
 		if (exception)
 		{
+			handle.destroy();
+			promise = nullptr;
+			handle = nullptr;
 			std::rethrow_exception(exception);
 		}
-		return std::move(*value);
+		auto value = std::move(*promise->value);
+		handle.destroy();
+		promise = nullptr;
+		handle = nullptr;
+		return value;
 	}
 
 private:
 	promise_type* promise{ nullptr };
 	handle_type handle{ nullptr };
-	std::coroutine_handle<> then{ nullptr };
-	std::exception_ptr exception{ nullptr };
-	std::optional<T> value{ std::nullopt };
 
 	friend promise_type;
 };
@@ -145,53 +147,63 @@ private:
 template<>
 struct single_future<void> final
 {
-	struct promise final
+	struct promise_t final
 	{
-		single_future<void> get_return_object()
+		single_future<void> get_return_object() noexcept
 		{
 			return {*this};
 		}
-		auto initial_suspend() { return std::suspend_never(); }
-		auto final_suspend()
+		auto initial_suspend() noexcept
+		{
+			return std::suspend_never();
+		}
+		auto final_suspend() noexcept
 		{
 			struct chain
 			{
 				std::coroutine_handle<> handle;
 
-				bool await_ready() { return false; }
+				bool await_ready() noexcept
+				{
+					return false;
+				}
 
-				void await_suspend(std::coroutine_handle<>)
+				std::coroutine_handle<> await_suspend(std::coroutine_handle<>) noexcept
 				{
 					if (handle)
 					{
-						handle.resume();
+						return handle;
 					}
+					return std::noop_coroutine();
 				}
 
-				void await_resume() {}
+				void await_resume() noexcept
+				{
+				}
 			};
-			return chain{ future->then };
+			return chain{ then };
 		}
 
-		void return_void()
+		void return_void() noexcept
 		{
 		}
 
-		void unhandled_exception()
+		void unhandled_exception() noexcept
 		{
-			future->exception = std::current_exception();
+			exception = std::current_exception();
 		}
 
 	private:
-		single_future<void>* future;
+		std::coroutine_handle<> then{ nullptr };
+		std::exception_ptr exception{ nullptr };
 
 		friend single_future<void>;
 	};
 
-	using promise_type = promise;
+	using promise_type = promise_t;
 	using handle_type = std::coroutine_handle<promise_type>;
 
-	bool await_ready()
+	bool await_ready() noexcept
 	{
 		return handle.done();
 	}
@@ -199,68 +211,62 @@ struct single_future<void> final
 	{
 		get();
 	}
-	void await_suspend(std::coroutine_handle<> handle)
+	void await_suspend(std::coroutine_handle<> handle) noexcept
 	{
-		then = handle;
+		promise->then = handle;
 	}
 
 	single_future() = default;
-	single_future(promise_type& promise)
+	single_future(promise_type& promise) noexcept
 		: promise{ &promise }
 		, handle{ std::coroutine_handle<promise_type>::from_promise(promise) }
 	{
-		promise.future = this;
 	}
 	single_future(const single_future& rhs) = delete;
-	single_future(single_future&& rhs)
+	single_future(single_future&& rhs) noexcept
 		: promise{ rhs.promise }
 		, handle{ std::move(rhs.handle) }
-		, then{ rhs.then }
-		, exception{ std::move(rhs.exception) }
 	{
+		rhs.promise = nullptr;
 		rhs.handle = nullptr;
-		if (promise)
-		{
-			promise->future = this;
-		}
 	}
 	single_future& operator=(const single_future& rhs) = delete;
-	single_future& operator=(single_future&& rhs)
+	single_future& operator=(single_future&& rhs) noexcept
 	{
 		promise = rhs.promise;
 		handle = std::move(rhs.handle);
-		then = rhs.then;
-		exception = std::move(rhs.exception);
 
+		rhs.promise = nullptr;
 		rhs.handle = nullptr;
-		if (promise)
-		{
-			promise->future = this;
-		}
 		return *this;
 	}
-	~single_future()
+	~single_future() noexcept
 	{
 		if (handle) handle.destroy();
 	}
 
-	bool is_ready() const
+	bool is_ready() const noexcept
 	{
 		return handle.done();
 	}
 	void get()
 	{
-		if (exception)
+		auto exception = std::move(promise->exception);
+		if (promise->exception)
 		{
+			handle.destroy();
+			promise = nullptr;
+			handle = nullptr;
 			std::rethrow_exception(exception);
 		}
+		handle.destroy();
+		promise = nullptr;
+		handle = nullptr;
 	}
 
 private:
 	promise_type * promise{ nullptr };
 	handle_type handle{ nullptr };
-	std::coroutine_handle<> then{ nullptr };
-	std::exception_ptr exception{ nullptr };
 
 	friend promise_type;
 };

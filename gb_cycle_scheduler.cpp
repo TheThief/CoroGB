@@ -2,7 +2,7 @@
 
 namespace coro_gb
 {
-	void cycle_scheduler::queue(uint32_t at, unit unit, priority priority, std::function<void()> fn)
+	void cycle_scheduler::queue(uint32_t at, unit unit, priority priority, std::function<void()> fn) noexcept
 	{
 		uint16_t priority_value = ((uint16_t) priority << 8 | (uint8_t) unit);
 		if (std::make_tuple((int32_t)(at - cycle_counter), priority_value)
@@ -15,7 +15,7 @@ namespace coro_gb
 		queued.push({ at, priority_value, fn });
 	}
 
-	void cycle_scheduler::tick(uint32_t num_cycles)
+	void cycle_scheduler::tick(uint32_t num_cycles) noexcept
 	{
 		end = cycle_counter + num_cycles;
 		while (!queued.empty() &&
@@ -42,12 +42,12 @@ namespace coro_gb
 
 	////////////////////////////////////////////////////////////////
 
-	void cycle_scheduler::awaitable_cycles_base::await_suspend(std::coroutine_handle<> handle)
+	void cycle_scheduler::awaitable_cycles_base::await_suspend(std::coroutine_handle<> handle) noexcept
 	{
 		scheduler.queue(wait_until, unit, priority, handle);
 	}
 
-	bool cycle_scheduler::awaitable_cycles_interruptible::await_resume()
+	bool cycle_scheduler::awaitable_cycles_interruptible::await_resume() noexcept
 	{
 		awaited_interrupt.set_callback(nullptr);
 

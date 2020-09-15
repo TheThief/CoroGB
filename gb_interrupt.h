@@ -1,37 +1,30 @@
 #pragma once
 
-#include <experimental/coroutine>
+#include <coroutine>
 #include <functional>
-
-namespace std
-{
-	using experimental::suspend_always;
-	using experimental::suspend_never;
-	using experimental::coroutine_handle;
-}
 
 namespace coro_gb
 {
 	struct interrupt final
 	{
-		interrupt() = default;
+		interrupt() noexcept = default;
 		interrupt(const interrupt& rhs) = delete;
 		interrupt(interrupt&& rhs) = delete;
 		interrupt& operator=(const interrupt& rhs) = delete;
 		interrupt& operator=(interrupt&& rhs) = delete;
 
-		bool await_ready()
+		bool await_ready() noexcept
 		{
 			return is_triggered;
 		}
-		void await_resume()
+		void await_resume() noexcept
 		{
 		}
-		void await_suspend(std::coroutine_handle<> handle)
+		void await_suspend(std::coroutine_handle<> handle) noexcept
 		{
 			bound_function = handle;
 		}
-		void trigger()
+		void trigger() noexcept
 		{
 			if (bound_function)
 			{
@@ -44,11 +37,11 @@ namespace coro_gb
 				is_triggered = true;
 			}
 		}
-		void reset()
+		void reset() noexcept
 		{
 			is_triggered = false;
 		}
-		void set_callback(std::function<void()> to_bind)
+		void set_callback(std::function<void()> to_bind) noexcept
 		{
 			bound_function = to_bind;
 		}
