@@ -116,7 +116,8 @@ namespace coro_gb
 				bLCDOnBug = true;
 			}
 
-			uint8_t window_y = 0;
+			uint8_t window_line = 0;
+			bool window_triggered = false;
 
 			for (uint8_t y = 0; y < 144; ++y)
 			{
@@ -175,7 +176,8 @@ namespace coro_gb
 				const uint16_t tiledata_base_addr_high = 0x0000;
 				const uint16_t bg_tilemap_base_addr = registers.lcd_control.bg_tilemap_select ? 0x1C00 : 0x1800;
 				const uint16_t spritedata_base_addr = 0x0000;
-				const bool window_enable = registers.lcd_control.window_enable && y >= registers.window_y && registers.window_x < 167;
+				window_triggered = (window_triggered || y == registers.window_y);
+				const bool window_enable = registers.lcd_control.window_enable && window_triggered && registers.window_x < 167;
 				const uint16_t window_tilemap_base_addr = registers.lcd_control.window_tilemap_select ? 0x1C00 : 0x1800;
 
 				bool bg_enable = registers.lcd_control.bg_enable;
@@ -229,9 +231,9 @@ namespace coro_gb
 					if (window_enable && !in_window && window_x == registers.window_x)
 					{
 						in_window = true;
-						tile_y = (window_y / 8) % 32;
-						sub_tile_y = window_y % 8;
-						++window_y;
+						tile_y = (window_line / 8) % 32;
+						sub_tile_y = window_line % 8;
+						++window_line;
 
 						{
 							tile_x = 0;
@@ -304,9 +306,9 @@ namespace coro_gb
 					if (window_enable && !in_window && window_x == registers.window_x)
 					{
 						in_window = true;
-						tile_y = (window_y / 8) % 32;
-						sub_tile_y = window_y % 8;
-						++window_y;
+						tile_y = (window_line / 8) % 32;
+						sub_tile_y = window_line % 8;
+						++window_line;
 
 						{
 							tile_x = 0;
@@ -389,9 +391,9 @@ namespace coro_gb
 					if (window_enable && !in_window && window_x == registers.window_x)
 					{
 						in_window = true;
-						tile_y = (window_y / 8) % 32;
-						sub_tile_y = window_y % 8;
-						++window_y;
+						tile_y = (window_line / 8) % 32;
+						sub_tile_y = window_line % 8;
+						++window_line;
 
 						{
 							tile_x = 0;

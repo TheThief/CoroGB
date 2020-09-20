@@ -219,12 +219,13 @@ Notes:
 
 ### Other tests
 
-| Test            | CoroGB |
-| --------------- | ------ |
-| acid2           | :+1:   |
-| dycptest2       | :x:    |
-| lyc             | :+1:   |
-| opus5           | :+1:   |
-| sprite_test_01  | :+1:   |
-| wx_split        | :+1:   |
-| windows_overlap | :+1:   |
+| Test             | CoroGB |
+| ---------------- | ------ |
+| acid2            | :+1:   |
+| dycptest2        | :x:    |
+| lyc              | :+1:   |
+| opus5            | :+1:   |
+| sprite_test_01   | :+1:   |
+| wx_split         | :+1:   |
+| windows_overlap  | :+1:   |
+| window_y_trigger | :+1:   |

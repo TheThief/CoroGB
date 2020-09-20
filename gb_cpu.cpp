@@ -102,7 +102,7 @@ namespace coro_gb
 	single_future<void> cpu::run()
 	{
 		bool halt_bug = false;
-		uint8_t additional_cycles = 0;
+		int8_t additional_cycles = 0;
 
 		// The CPU has one dummy M cycle on reset
 		dummy_wait(4);
