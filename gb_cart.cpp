@@ -52,7 +52,7 @@ namespace coro_gb
 	{
 		std::ifstream f{ in_rom_path, std::ios_base::binary };
 		uintmax_t rom_size = std::filesystem::file_size(in_rom_path);
-		if (rom_size < 16384 || rom_size > 2 * 1024 * 1042 || rom_size % 16384 != 0)
+		if (rom_size < 16384 || rom_size > 2 * 1024 * 1024 || rom_size % 16384 != 0)
 		{
 			throw std::runtime_error("bad rom file");
 		}
