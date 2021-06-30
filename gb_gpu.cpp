@@ -6,6 +6,7 @@
 #include "single_future.h"
 
 #include <algorithm>
+#include <immintrin.h>
 
 namespace coro_gb
 {
@@ -35,48 +36,36 @@ namespace coro_gb
 
 	void gpu::fifo_apply_bg(fifo_entry* fifo, uint8_t low_bits, uint8_t high_bits)
 	{
-		fifo[0] = { 0, 0, (uint8_t)(((high_bits >> 6) & 0b10) | ((low_bits >> 7) & 0b01)) };
-		fifo[1] = { 0, 0, (uint8_t)(((high_bits >> 5) & 0b10) | ((low_bits >> 6) & 0b01)) };
-		fifo[2] = { 0, 0, (uint8_t)(((high_bits >> 4) & 0b10) | ((low_bits >> 5) & 0b01)) };
-		fifo[3] = { 0, 0, (uint8_t)(((high_bits >> 3) & 0b10) | ((low_bits >> 4) & 0b01)) };
-		fifo[4] = { 0, 0, (uint8_t)(((high_bits >> 2) & 0b10) | ((low_bits >> 3) & 0b01)) };
-		fifo[5] = { 0, 0, (uint8_t)(((high_bits >> 1) & 0b10) | ((low_bits >> 2) & 0b01)) };
-		fifo[6] = { 0, 0, (uint8_t)(((high_bits >> 0) & 0b10) | ((low_bits >> 1) & 0b01)) };
-		fifo[7] = { 0, 0, (uint8_t)(((high_bits << 1) & 0b10) | ((low_bits >> 0) & 0b01)) };
+		uint64_t out = _pdep_u64(low_bits, 0x0101010101010101) | _pdep_u64(high_bits, 0x0202020202020202);
+		*(uint64_t*)fifo = _byteswap_uint64(out);
 	}
 
-	void gpu::fifo_apply_sprite_pixel(fifo_entry& fifo, sprite_attributes::flags_t flags, uint8_t sprite_pixel)
+	void gpu::fifo_apply_sprite_pixel(fifo_entry& fifo, sprite_attributes::flags_t flags, const fifo_entry sprite_pixel)
 	{
-		if (sprite_pixel != 0 && fifo.type == 0 && (!flags.priority || fifo.colour == 0))
+		if (sprite_pixel.colour != 0 && fifo.type == 0 && (!flags.priority || fifo.colour == 0))
 		{
-			fifo = { 1, flags.palette, sprite_pixel };
+			fifo = { sprite_pixel.colour, flags.palette, 1 };
 		}
 	}
 
 	void gpu::fifo_apply_sprite(fifo_entry* fifo, uint8_t low_bits, uint8_t high_bits, sprite_attributes::flags_t flags)
 	{
+		fifo_entry sprite_fifo[8];
+		uint64_t out = _pdep_u64(low_bits, 0x0101010101010101) | _pdep_u64(high_bits, 0x0202020202020202);
 		if (!flags.flip_x)
 		{
-			fifo_apply_sprite_pixel(fifo[0], flags, (uint8_t)(((high_bits >> 6) & 0b10) | ((low_bits >> 7) & 0b01)));
-			fifo_apply_sprite_pixel(fifo[1], flags, (uint8_t)(((high_bits >> 5) & 0b10) | ((low_bits >> 6) & 0b01)));
-			fifo_apply_sprite_pixel(fifo[2], flags, (uint8_t)(((high_bits >> 4) & 0b10) | ((low_bits >> 5) & 0b01)));
-			fifo_apply_sprite_pixel(fifo[3], flags, (uint8_t)(((high_bits >> 3) & 0b10) | ((low_bits >> 4) & 0b01)));
-			fifo_apply_sprite_pixel(fifo[4], flags, (uint8_t)(((high_bits >> 2) & 0b10) | ((low_bits >> 3) & 0b01)));
-			fifo_apply_sprite_pixel(fifo[5], flags, (uint8_t)(((high_bits >> 1) & 0b10) | ((low_bits >> 2) & 0b01)));
-			fifo_apply_sprite_pixel(fifo[6], flags, (uint8_t)(((high_bits >> 0) & 0b10) | ((low_bits >> 1) & 0b01)));
-			fifo_apply_sprite_pixel(fifo[7], flags, (uint8_t)(((high_bits << 1) & 0b10) | ((low_bits >> 0) & 0b01)));
+			out = _byteswap_uint64(out);
 		}
-		else
-		{
-			fifo_apply_sprite_pixel(fifo[0], flags, (uint8_t)(((high_bits << 1) & 0b10) | ((low_bits >> 0) & 0b01)));
-			fifo_apply_sprite_pixel(fifo[1], flags, (uint8_t)(((high_bits >> 0) & 0b10) | ((low_bits >> 1) & 0b01)));
-			fifo_apply_sprite_pixel(fifo[2], flags, (uint8_t)(((high_bits >> 1) & 0b10) | ((low_bits >> 2) & 0b01)));
-			fifo_apply_sprite_pixel(fifo[3], flags, (uint8_t)(((high_bits >> 2) & 0b10) | ((low_bits >> 3) & 0b01)));
-			fifo_apply_sprite_pixel(fifo[4], flags, (uint8_t)(((high_bits >> 3) & 0b10) | ((low_bits >> 4) & 0b01)));
-			fifo_apply_sprite_pixel(fifo[5], flags, (uint8_t)(((high_bits >> 4) & 0b10) | ((low_bits >> 5) & 0b01)));
-			fifo_apply_sprite_pixel(fifo[6], flags, (uint8_t)(((high_bits >> 5) & 0b10) | ((low_bits >> 6) & 0b01)));
-			fifo_apply_sprite_pixel(fifo[7], flags, (uint8_t)(((high_bits >> 6) & 0b10) | ((low_bits >> 7) & 0b01)));
-		}
+		*(uint64_t*)sprite_fifo = out;
+
+		fifo_apply_sprite_pixel(fifo[0], flags, sprite_fifo[0]);
+		fifo_apply_sprite_pixel(fifo[1], flags, sprite_fifo[1]);
+		fifo_apply_sprite_pixel(fifo[2], flags, sprite_fifo[2]);
+		fifo_apply_sprite_pixel(fifo[3], flags, sprite_fifo[3]);
+		fifo_apply_sprite_pixel(fifo[4], flags, sprite_fifo[4]);
+		fifo_apply_sprite_pixel(fifo[5], flags, sprite_fifo[5]);
+		fifo_apply_sprite_pixel(fifo[6], flags, sprite_fifo[6]);
+		fifo_apply_sprite_pixel(fifo[7], flags, sprite_fifo[7]);
 	}
 
 	single_future<void> gpu::run()
@@ -109,7 +98,7 @@ namespace coro_gb
 				stat_flag = false;
 				vblank_flag = false;
 				registers.lcd_y = 0;
-				registers.lcd_stat.mode = (lcd_mode)0;
+				registers.lcd_stat.mode = lcd_mode::power_off;
 				registers.lcd_stat.coincidence = false;
 				interrupts.lcd_enable.reset();
 				co_await interrupts.lcd_enable;
@@ -126,7 +115,7 @@ namespace coro_gb
 				{ }
 				else
 				{
-					line_start -= 4;
+					line_start -= 8;
 				}
 
 				std::vector<sprite_attributes> sprites;
@@ -162,10 +151,9 @@ namespace coro_gb
 				else
 				{
 					// LCD On Bug
-					update_stat(lcd_mode::h_blank, y);
+					update_stat(lcd_mode::initial_power_on, y);
 
-					co_await cycles(cycle_scheduler::priority::write, 76);
-					memory.set_mapping({ 0xFE00, 0xFEA0, nullptr, nullptr }); // block access to oam
+					co_await cycles(cycle_scheduler::priority::write, 72);
 					bLCDOnBug = false;
 				}
 
@@ -562,8 +550,10 @@ namespace coro_gb
 		}
 		else if (address == 0xFF41)
 		{
+			registers.lcd_stat.u8 = 0x80 | (registers.lcd_stat.u8 & 0x07) | (0xFF & 0x78); // LCD Stat write bug - briefly enables all interrupts!
+			update_interrupt_flags(registers.lcd_stat.mode);
 			registers.lcd_stat.u8 = 0x80 | (registers.lcd_stat.u8 & 0x07) | (u8 & 0x78);
-			update_interrupt_flags();
+			update_interrupt_flags(registers.lcd_stat.mode);
 			return;
 		}
 		else if (address == 0xFF42)
@@ -616,23 +606,21 @@ namespace coro_gb
 		throw std::runtime_error("No such gpu register");
 	}
 
-	void gpu::update_interrupt_flags()
+	void gpu::update_interrupt_flags(lcd_mode mode)
 	{
-		registers.lcd_stat.coincidence = (registers.lcd_yc == registers.lcd_y);
-
 		bool old_stat_flag = stat_flag;
 		stat_flag = false;
 
-		if (registers.lcd_stat.mode == lcd_mode::h_blank && registers.lcd_stat.hblank_ienable)
+		if (mode == lcd_mode::h_blank && registers.lcd_stat.hblank_ienable)
 		{
 			stat_flag = true;
 		}
 		// should we be triggering an oam interrupt at the start of vblank? Sources vary on this
-		else if (registers.lcd_stat.mode == lcd_mode::v_blank && registers.lcd_stat.vblank_ienable)
+		else if (mode == lcd_mode::v_blank && registers.lcd_stat.vblank_ienable)
 		{
 			stat_flag = true;
 		}
-		else if (registers.lcd_stat.mode == lcd_mode::oam_search && registers.lcd_stat.oam_ienable)
+		else if (mode == lcd_mode::oam_search && registers.lcd_stat.oam_ienable)
 		{
 			stat_flag = true;
 		}
@@ -643,7 +631,7 @@ namespace coro_gb
 
 		bool old_vblank_flag = vblank_flag;
 		vblank_flag = false;
-		if (registers.lcd_stat.mode == lcd_mode::v_blank)
+		if (mode == lcd_mode::v_blank)
 		{
 			vblank_flag = true;
 		}
@@ -679,6 +667,8 @@ namespace coro_gb
 		}
 		switch (mode)
 		{
+		case lcd_mode::power_off:
+		case lcd_mode::initial_power_on:
 		case lcd_mode::h_blank:
 			memory.set_mapping({ 0xFE00, 0xFEA0, (uint8_t*) oam.data(), (uint8_t*) oam.data() }); // restore access to oam
 			memory.set_mapping({ 0x8000, 0x9FFF, vram.data(), vram.data() });                     // restore access to vram
@@ -686,18 +676,20 @@ namespace coro_gb
 		case lcd_mode::v_blank:
 			break;
 		case lcd_mode::oam_search:
-			memory.set_mapping({ 0xFE00, 0xFEA0, nullptr, nullptr }); // block access to oam
+			//memory.set_mapping({ 0xFE00, 0xFEA0, nullptr, nullptr }); // block access to oam
 			break;
 		case lcd_mode::lcd_write:
-			memory.set_mapping({ 0x8000, 0x9FFF, nullptr, nullptr }); // block access to vram
+			//memory.set_mapping({ 0x8000, 0x9FFF, nullptr, nullptr }); // block access to vram
 			break;
 		}
+		update_interrupt_flags(mode);
 		scheduler.queue(scheduler.get_cycle_counter() + 4, cycle_scheduler::unit::gpu, cycle_scheduler::priority::write,
 			[this, mode]() {
-				registers.lcd_stat.mode = mode;
-				if (mode != lcd_mode::lcd_write)
+				registers.lcd_stat.mode = mode; // truncates to 2 bits
+				if (mode == lcd_mode::h_blank || mode == lcd_mode::v_blank || mode == lcd_mode::oam_search || mode == lcd_mode::initial_power_on)
 				{
-					update_interrupt_flags();
+					registers.lcd_stat.coincidence = (registers.lcd_yc == registers.lcd_y);
+					update_interrupt_flags(mode);
 				}
 			});
 	}

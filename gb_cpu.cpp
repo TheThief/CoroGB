@@ -615,10 +615,10 @@ namespace coro_gb
 							uint64_t halt_total_cycles = scheduler.get_cycle_counter() - halt_start_cycles;
 
 							// re-align to 4-cycle boundary
-							// as interrupts are tested on the 3rd t-cycle, if we get an interrupt before that cycle,
-							// but after cycle 0, we need to rewind so the exception code above works correctly
-							// 0->0, 1->-1, 2->-2, 3->+1
-							dummy_wait(1 - ((halt_total_cycles + 1) % 4));
+							// during halt interrupts are tested on cycle 0, rather than the usual cycle 2
+							// as ppu is ticked on the falling edge, an interrupt triggered by the ppu on cycle 0 doesn't show until the next M-cycle on the cpu
+							// 0->+4, 1->+3, 2->+2, 3->+1
+							dummy_wait(4 - (halt_total_cycles % 4));
 
 							// jump to interrupt handler is handled by the interrupt handling code at the start of the loop
 							continue;

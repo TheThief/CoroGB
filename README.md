@@ -1,4 +1,5 @@
 # CoroGB
+
 CoroGB is an experimental gameboy emulator written in C++ w/ coroutines
 
 It is primarily developed for personal advancement, but is hopefully of interest.
@@ -17,14 +18,14 @@ Numpad+ is speed up
 
 ### Blargg's tests
 
-| Test              | mooneye-gb | CoroGB |
-| ----------------- | ---------- | ------ |
-| cpu instrs        | :+1:       | :o:    |
-| dmg sound 2       | :x:        | :x:    |
-| instr timing      | :+1:       | :x:    |
-| mem timing 2      | :+1:       | :x:    |
-| oam bug 2         | :x:        | :x:    |
-| halt bug          |            | :+1:   |
+| Test         | mooneye-gb | CoroGB |
+|--------------|------------|--------|
+| cpu instrs   | :+1:       | :o:    |
+| dmg sound 2  | :x:        | :x:    |
+| instr timing | :+1:       | :x:    |
+| mem timing 2 | :+1:       | :x:    |
+| oam bug 2    | :x:        | :x:    |
+| halt bug     |            | :+1:   |
 
 Notes:
 
@@ -34,7 +35,7 @@ Notes:
 ### Mooneye GB acceptance tests
 
 | Test                    | mooneye-gb | CoroGB |
-| ----------------------- | ---------- | ------ |
+|-------------------------|------------|--------|
 | add sp e timing         | :+1:       | :+1:   |
 | boot div dmgABCmgb      | :x:        | :x:    |
 | boot hwio dmgABCmgb     | :x:        | :x:    |
@@ -76,35 +77,35 @@ Notes:
 #### Bits (unusable bits in memory and registers)
 
 | Test           | mooneye-gb | CoroGB |
-| -------------- | ---------- | ------ |
+|----------------|------------|--------|
 | mem oam        | :+1:       | :+1:   |
 | reg f          | :+1:       | :+1:   |
 | unused_hwio GS | :+1:       | :+1:   |
 
 #### Instructions
 
-| Test                        | mooneye-gb | CoroGB |
-| --------------------------- | ---------- | ------ |
-| daa                         | :+1:       | :+1:   |
+| Test | mooneye-gb | CoroGB |
+|------|------------|--------|
+| daa  | :+1:       | :+1:   |
 
 #### Interrupt handling
 
-| Test                        | mooneye-gb | CoroGB |
-| --------------------------- | ---------- | ------ |
-| ie push                     | :+1:       | :+1:   |
+| Test    | mooneye-gb | CoroGB |
+|---------|------------|--------|
+| ie push | :+1:       | :+1:   |
 
 #### OAM DMA
 
-| Test                        | mooneye-gb | CoroGB |
-| --------------------------- | ---------- | ------ |
-| basic                       | :+1:       | :+1:   |
-| reg_read                    | :+1:       | :+1:   |
-| sources dmgABCmgbS          | :+1:       | :+1:   |
+| Test               | mooneye-gb | CoroGB |
+|--------------------|------------|--------|
+| basic              | :+1:       | :+1:   |
+| reg_read           | :+1:       | :+1:   |
+| sources dmgABCmgbS | :+1:       | :+1:   |
 
 #### PPU
 
 | Test                        | mooneye-gb | CoroGB |
-| --------------------------- | ---------- | ------ |
+|-----------------------------|------------|--------|
 | hblank ly scx timing GS     | :+1:       | :x:    |
 | intr 1 2 timing GS          | :+1:       | :+1:   |
 | intr 2 0 timing             | :+1:       | :x:    |
@@ -124,9 +125,9 @@ Notes:
 
 #### Serial
 
-| Test                        | mooneye-gb | CoroGB |
-| --------------------------- | ---------- | ------ |
-| boot sclk align dmgABCmgb   | :x:        | :x:    |
+| Test                      | mooneye-gb | CoroGB |
+|---------------------------|------------|--------|
+| boot sclk align dmgABCmgb | :x:        | :x:    |
 
 Notes:
 
@@ -135,7 +136,7 @@ Notes:
 #### Timer
 
 | Test                 | mooneye-gb | CoroGB |
-| -------------------- | ---------- | ------ |
+|----------------------|------------|--------|
 | div write            | :+1:       | :x:    |
 | rapid toggle         | :+1:       | :x:    |
 | tim00 div trigger    | :+1:       | :x:    |
@@ -159,8 +160,11 @@ Notes:
 #### MBC1
 
 | Test              | mooneye-gb | CoroGB |
-| ----------------- | ---------- | ------ |
-| bits ram en       | :+1:       | :+1:   |
+|-------------------|------------|--------|
+| bits bank1        | :+1:       | :+1:   |
+| bits bank2        | :+1:       | :+1:   |
+| bits mode         | :+1:       | :+1:   |
+| bits ramg         | :+1:       | :+1:   |
 | rom 512Kb         | :+1:       | :+1:   |
 | rom 1Mb           | :+1:       | :+1:   |
 | rom 2Mb           | :+1:       | :+1:   |
@@ -175,16 +179,45 @@ Notes:
 
 * Yes, CoroGB supports MBC1 multicart roms!
 
+#### MBC2
+
+| Test        | mooneye-gb | CoroGB |
+|-------------|------------|--------|
+| bits ramg   | :+1:       | :+1:   |
+| bits romb   | :+1:       | :+1:   |
+| bits unused | :+1:       | :+1:   |
+| rom 512kb   | :+1:       | :+1:   |
+| rom 1Mb     | :+1:       | :+1:   |
+| rom 2Mb     | :+1:       | :+1:   |
+| ram         | :+1:       | :x:    |
+
+Notes:
+
+* Ram test fails due to not implementing cart ram mirror and not restricting cart ram to 4 bits
+
+#### MBC5
+
+| Test      | mooneye-gb |
+|-----------|------------|
+| rom 512kb | :+1:       |
+| rom 1Mb   | :+1:       |
+| rom 2Mb   | :+1:       |
+| rom 4Mb   | :+1:       |
+| rom 8Mb   | :+1:       |
+| rom 16Mb  | :+1:       |
+| rom 32Mb  | :+1:       |
+| rom 64Mb  | :+1:       |
+
 ### Mooneye GB manual tests
 
 | Test            | mooneye-gb | CoroGB |
-| --------------- | ---------- | ------ |
+|-----------------|------------|--------|
 | sprite priority | :+1:       | :+1:   |
 
 ### Mealybug tests
 
 | Test                              | CoroGB |
-| --------------------------------- | ------ |
+|-----------------------------------|--------|
 | m3_wx_4_change                    | :x:    |
 | m3_wx_4_change_sprites            | :x:    |
 | m3_wx_5_change                    | :x:    |
@@ -220,7 +253,7 @@ Notes:
 ### Other tests
 
 | Test             | CoroGB |
-| ---------------- | ------ |
+|------------------|--------|
 | acid2            | :+1:   |
 | dycptest2        | :x:    |
 | lyc              | :+1:   |

@@ -48,13 +48,13 @@ namespace coro_gb
 
 		struct fifo_entry
 		{
-			uint8_t type : 1; // 0 = bg, 1 = sprite
-			uint8_t palette : 1; // sprites only, selects sprite palette
 			uint8_t colour : 2; // colour in palette
+			uint8_t palette : 1; // sprites only, selects sprite palette
+			uint8_t type : 1; // 0 = bg, 1 = sprite
 		};
 
 		static void fifo_apply_bg(fifo_entry* fifo, uint8_t low_bits, uint8_t high_bits);
-		static void fifo_apply_sprite_pixel(fifo_entry& fifo, sprite_attributes::flags_t flags, uint8_t sprite_pixel);
+		static void fifo_apply_sprite_pixel(fifo_entry& fifo, sprite_attributes::flags_t flags, fifo_entry sprite_pixel);
 		static void fifo_apply_sprite(fifo_entry* fifo, uint8_t low_bits, uint8_t high_bits, sprite_attributes::flags_t flags);
 
 		uint8_t on_register_read(uint16_t address) const;
@@ -64,18 +64,21 @@ namespace coro_gb
 		{
 			// Mode 0 : The LCD controller is in the H - Blank period
 			// the CPU can access both the display RAM(8000h - 9FFFh) and OAM(FE00h - FE9Fh)
-			h_blank,
+			h_blank = 0x00,
 			// Mode 1 : The LCD contoller is in the V - Blank period (or the display is disabled)
 			// the CPU can access both the display RAM(8000h - 9FFFh) and OAM(FE00h - FE9Fh)
-			v_blank,
+			v_blank = 0x01,
 			// Mode 2 : The LCD controller is reading from OAM memory.
 			// The CPU <cannot> access OAM memory(FE00h - FE9Fh) during this period.
-			oam_search,
+			oam_search = 0x02,
 			// Mode 3 : Transfering Data to LCD Driver.
 			// The LCD controller is reading from both OAM and VRAM,
 			// The CPU <cannot> access OAM and VRAM during this period.
 			// CGB Mode : Cannot access Palette Data(FF69, FF6B) either.
-			lcd_write,
+			lcd_write = 0x03,
+
+			initial_power_on = 0x80,
+			power_off = 0xF0,
 
 			// The following are typical when the display is enabled :
 			// Mode 2  2_____2_____2_____2_____2_____2___________________2____
@@ -86,7 +89,7 @@ namespace coro_gb
 
 		bool stat_flag = false;
 		bool vblank_flag = false;
-		void update_interrupt_flags();
+		void update_interrupt_flags(lcd_mode mode);
 		void update_stat(lcd_mode mode, uint8_t y);
 
 		single_future<void> run_dma();
