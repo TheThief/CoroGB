@@ -1,7 +1,7 @@
 #pragma once
 
 #include "gb_cpu.h"
-#include "gb_gpu.h"
+#include "gb_ppu.h"
 #include "gb_buttons.h"
 #include "gb_cycle_scheduler.h"
 #include "gb_memory_mapper.h"
@@ -54,17 +54,17 @@ namespace coro_gb
 		cycle_scheduler scheduler;
 		memory_mapper memory_mapper;
 		cpu cpu;
-		gpu gpu;
+		ppu ppu;
 		std::array<std::array<uint32_t, 4>, 3> palette;
 		cart* loaded_cart = nullptr;
 		single_future<void> cpu_running;
-		single_future<void> gpu_running;
+		single_future<void> ppu_running;
 	};
 
 	inline emu::emu()
 		: memory_mapper{ scheduler }
 		, cpu{ scheduler, memory_mapper }
-		, gpu{ scheduler, memory_mapper }
+		, ppu{ scheduler, memory_mapper }
 	{
 		select_palette(palette_preset::green);
 	}
@@ -85,7 +85,7 @@ namespace coro_gb
 			throw std::runtime_error("no cart loaded!");
 		}
 		cpu_running = cpu.run();
-		gpu_running = gpu.run();
+		ppu_running = ppu.run();
 	}
 
 	inline void emu::load_boot_rom(std::filesystem::path boot_rom_path)
@@ -112,20 +112,20 @@ namespace coro_gb
 		{
 			cpu_running.get();
 		}
-		if (gpu_running.is_ready())
+		if (ppu_running.is_ready())
 		{
-			gpu_running.get();
+			ppu_running.get();
 		}
 	}
 
 	inline bool emu::is_screen_enabled() const
 	{
-		return gpu.is_screen_enabled();
+		return ppu.is_screen_enabled();
 	}
 
 	inline const uint8_t* emu::get_screen_buffer() const
 	{
-		return gpu.get_screen_buffer();
+		return ppu.get_screen_buffer();
 	}
 
 	inline const uint32_t* emu::get_palette() const
@@ -135,7 +135,7 @@ namespace coro_gb
 
 	inline void emu::set_display_callback(std::function<void()> display_callback)
 	{
-		gpu.set_display_callback(std::move(display_callback));
+		ppu.set_display_callback(std::move(display_callback));
 	}
 
 	inline void emu::input(button_id button, button_state state)

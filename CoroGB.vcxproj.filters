@@ -32,9 +32,6 @@
     <ClInclude Include="gb_memory_mapper.h">
       <Filter>Headers</Filter>
     </ClInclude>
-    <ClInclude Include="gb_gpu.h">
-      <Filter>Headers</Filter>
-    </ClInclude>
     <ClInclude Include="gb_interrupt.h">
       <Filter>Headers</Filter>
     </ClInclude>
@@ -45,6 +42,9 @@
       <Filter>Headers</Filter>
     </ClInclude>
     <ClInclude Include="gb_cart.h">
+      <Filter>Headers</Filter>
+    </ClInclude>
+    <ClInclude Include="gb_ppu.h">
       <Filter>Headers</Filter>
     </ClInclude>
   </ItemGroup>
@@ -68,9 +68,6 @@
     <ClCompile Include="gb_memory_mapper.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="gb_gpu.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
     <ClCompile Include="gb_cycle_scheduler.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
@@ -78,6 +75,9 @@
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="gb_emu.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="gb_ppu.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>

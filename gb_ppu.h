@@ -12,9 +12,9 @@ namespace coro_gb
 {
 	struct memory_mapper;
 
-	struct gpu final
+	struct ppu final
 	{
-		gpu(cycle_scheduler& scheduler, memory_mapper& memory);
+		ppu(cycle_scheduler& scheduler, memory_mapper& memory);
 
 		single_future<void> run();
 
@@ -41,21 +41,50 @@ namespace coro_gb
 					uint8_t palette  : 1;
 					uint8_t flip_x   : 1;
 					uint8_t flip_y   : 1;
-					uint8_t priority : 1;
+					uint8_t priority : 1;; // 0 = above bg, 1 = below bg
 				};
 			} flags;
 		};
 
-		struct fifo_entry
+		union palette_t
 		{
-			uint8_t colour : 2; // colour in palette
-			uint8_t palette : 1; // sprites only, selects sprite palette
-			uint8_t type : 1; // 0 = bg, 1 = sprite
+			uint8_t u8;
+			struct
+			{
+				uint8_t _0 : 2;
+				uint8_t _1 : 2;
+				uint8_t _2 : 2;
+				uint8_t _3 : 2;
+			};
+
+			uint8_t operator[](uint8_t index) const
+			{
+				return (u8 >> (index * 2)) & 0x03;
+			}
 		};
 
-		static void fifo_apply_bg(fifo_entry* fifo, uint8_t low_bits, uint8_t high_bits);
-		static void fifo_apply_sprite_pixel(fifo_entry& fifo, sprite_attributes::flags_t flags, fifo_entry sprite_pixel);
-		static void fifo_apply_sprite(fifo_entry* fifo, uint8_t low_bits, uint8_t high_bits, sprite_attributes::flags_t flags);
+		struct palettes_t
+		{
+			palette_t background_palette;
+			palette_t obj_palettes[2];
+		};
+		
+		struct fifo_t
+		{
+			uint8_t bg_count = 0;
+			uint8_t bg_colour0 = 0;
+			uint8_t bg_colour1 = 0;
+
+			uint8_t obj_colour0 = 0;
+			uint8_t obj_colour1 = 0;
+			uint8_t obj_palette = 0;
+			uint8_t obj_mask = 0;    // 0 = no or low priority pixel, 1 = high prio pixel
+
+			void apply_bg(uint8_t low_bits, uint8_t high_bits);
+			void apply_sprite(uint8_t low_bits, uint8_t high_bits, sprite_attributes::flags_t flags);
+			uint8_t pop(const palettes_t& palettes);
+			void discard(uint8_t count);
+		};
 
 		uint8_t on_register_read(uint16_t address) const;
 		void on_register_write(uint16_t address, uint8_t value);
@@ -161,21 +190,8 @@ namespace coro_gb
 			uint8_t lcd_yc;
 			// 0xFF46 - DMA - DMA Transfer and Start Address
 			uint8_t dma_start;
-			// 0xFF47 - BG Palette Data
-			union palette
-			{
-				uint8_t u8;
-				struct
-				{
-					uint8_t _0 : 2;
-					uint8_t _1 : 2;
-					uint8_t _2 : 2;
-					uint8_t _3 : 2;
-				};
-			};
-			palette background_palette;
-			// 0xFF48-0xFF49 - Obj Palette 0/1 Data
-			palette obj_palette[2];
+			// 0xFF47-0xFF49 - BG/Obj Palette Data
+			palettes_t palettes;
 			// 0xFF4A - Window Y Pos
 			uint8_t window_y;
 			// 0xFF4B - Window X Pos
@@ -184,17 +200,17 @@ namespace coro_gb
 		registers_t registers;
 	};
 
-	inline void gpu::set_display_callback(std::function<void()> new_display_callback)
+	inline void ppu::set_display_callback(std::function<void()> new_display_callback)
 	{
 		display_callback = std::move(new_display_callback);
 	}
 
-	inline bool gpu::is_screen_enabled() const
+	inline bool ppu::is_screen_enabled() const
 	{
 		return registers.lcd_control.lcd_enable;
 	}
 
-	inline const uint8_t* gpu::get_screen_buffer() const
+	inline const uint8_t* ppu::get_screen_buffer() const
 	{
 		return screen.data();
 	}

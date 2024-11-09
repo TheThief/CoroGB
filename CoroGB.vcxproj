@@ -1,4 +1,4 @@
-<?xml version="1.0" encoding="utf-8"?>
+﻿<?xml version="1.0" encoding="utf-8"?>
 <Project DefaultTargets="Build" ToolsVersion="15.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup Label="ProjectConfigurations">
     <ProjectConfiguration Include="Debug|x64">
@@ -93,7 +93,7 @@
     <ClInclude Include="gb_buttons.h" />
     <ClInclude Include="gb_cart.h" />
     <ClInclude Include="gb_cycle_scheduler.h" />
-    <ClInclude Include="gb_gpu.h" />
+    <ClInclude Include="gb_ppu.h" />
     <ClInclude Include="gb_interrupt.h" />
     <ClInclude Include="gb_memory_mapper.h" />
     <ClInclude Include="resource.h" />
@@ -106,7 +106,7 @@
     <ClCompile Include="gb_cycle_scheduler.cpp" />
     <ClInclude Include="gb_emu.h" />
     <ClCompile Include="gb_emu.cpp" />
-    <ClCompile Include="gb_gpu.cpp" />
+    <ClCompile Include="gb_ppu.cpp" />
     <ClCompile Include="gb_memory_mapper.cpp" />
     <ClCompile Include="windows.cpp" />
   </ItemGroup>
