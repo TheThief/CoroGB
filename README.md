@@ -218,11 +218,7 @@ Notes:
 
 | Test                              | CoroGB |
 |-----------------------------------|--------|
-| m3_wx_4_change                    | :x:    |
-| m3_wx_4_change_sprites            | :x:    |
-| m3_wx_5_change                    | :x:    |
-| m3_wx_6_change                    | :x:    |
-| m2_win_en_toggle                  | :x:    |
+| m2_win_en_toggle                  | :+1:   |
 | m3_bgp_change                     | :x:    |
 | m3_bgp_change_sprites             | :x:    |
 | m3_lcdc_bg_en_change              | :x:    |
@@ -249,6 +245,10 @@ Notes:
 | m3_scy_change2                    | :x:    |
 | m3_window_timing                  | :x:    |
 | m3_window_timing_wx_0             | :x:    |
+| m3_wx_4_change                    | :x:    |
+| m3_wx_4_change_sprites            | :x:    |
+| m3_wx_5_change                    | :x:    |
+| m3_wx_6_change                    | :x:    |
 
 ### Other tests
 

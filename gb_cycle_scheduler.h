@@ -1,13 +1,19 @@
 #pragma once
 
 #include <coroutine>
+#include <stdexcept>
 
 #include "gb_interrupt.h"
 #include "utils.h"
 
 namespace coro_gb
 {
-	struct interrupt;
+	struct interrupted : public std::runtime_error
+	{
+		interrupted()
+			: std::runtime_error("interrupted!")
+		{ }
+	};
 
 	struct cycle_scheduler final
 	{
@@ -62,7 +68,7 @@ namespace coro_gb
 			awaitable_cycles_interruptible(cycle_scheduler& scheduler, interrupt& awaited_interrupt, cycle_scheduler::unit unit, cycle_scheduler::priority priority, uint32_t wait) noexcept;
 
 			bool await_ready() noexcept;
-			bool await_resume() noexcept; // returns true if interrupted
+			bool await_resume(); // returns true if interrupted
 			void await_suspend(std::coroutine_handle<> handle) noexcept;
 
 		protected:

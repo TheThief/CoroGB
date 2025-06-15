@@ -71,14 +71,14 @@ namespace coro_gb
 		
 		struct fifo_t
 		{
-			uint8_t bg_count = 0;
+			uint8_t bg_count   = 0;
 			uint8_t bg_colour0 = 0;
 			uint8_t bg_colour1 = 0;
 
-			uint8_t obj_colour0 = 0;
-			uint8_t obj_colour1 = 0;
-			uint8_t obj_palette = 0;
-			uint8_t obj_mask = 0;    // 0 = no or low priority pixel, 1 = high prio pixel
+			uint8_t obj_colour0  = 0;
+			uint8_t obj_colour1  = 0;
+			uint8_t obj_palette  = 0;
+			uint8_t obj_priority = 0; // 0 = no or low priority pixel, 1 = high prio pixel
 
 			void apply_bg(uint8_t low_bits, uint8_t high_bits);
 			void apply_sprite(uint8_t low_bits, uint8_t high_bits, sprite_attributes::flags_t flags);

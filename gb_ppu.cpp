@@ -58,12 +58,13 @@ namespace coro_gb
 			high_bits = flipx(high_bits);
 		}
 
+		uint8_t obj_mask = (obj_colour0 | obj_colour1);
 		uint8_t mask = (low_bits | high_bits) & ~obj_mask;
 
-		obj_colour0 = (obj_colour0 & ~mask) | (low_bits & mask);
-		obj_colour1 = (obj_colour1 & ~mask) | (high_bits & mask);
-		obj_palette = (obj_palette & ~mask) | (flags.palette * mask);
-		obj_mask    = (obj_mask    & ~mask) | ((flags.priority-1) & mask);
+		obj_colour0  = (obj_colour0  & ~mask) | (low_bits & mask);
+		obj_colour1  = (obj_colour1  & ~mask) | (high_bits & mask);
+		obj_palette  = (obj_palette  & ~mask) | (-flags.palette & mask);
+		obj_priority = (obj_priority & ~mask) | ((flags.priority-1) & mask);
 	}
 
 	uint8_t ppu::fifo_t::pop(const palettes_t& palettes)
@@ -71,19 +72,19 @@ namespace coro_gb
 		assert(bg_count > 0);
 		--bg_count;
 
-		const uint8_t bg_colour = ((bg_colour1 & 1) << 1) | (bg_colour0 & 1);
+		const uint8_t bg_colour  = ((bg_colour1  & 1) << 1) | (bg_colour0  & 1);
 		const uint8_t obj_colour = ((obj_colour1 & 1) << 1) | (obj_colour0 & 1);
-		const uint8_t palette = (obj_palette & 1);
-		const bool mask = (obj_mask & 1);
+		const uint8_t palette    = (obj_palette & 1);
+		const bool priority      = (obj_priority & 1);
 
-		bg_colour0  >>= 1;
-		bg_colour1  >>= 1;
-		obj_colour0 >>= 1;
-		obj_colour1 >>= 1;
-		obj_palette >>= 1;
-		obj_mask    >>= 1;
+		bg_colour0   >>= 1;
+		bg_colour1   >>= 1;
+		obj_colour0  >>= 1;
+		obj_colour1  >>= 1;
+		obj_palette  >>= 1;
+		obj_priority >>= 1;
 
-		if (obj_colour != 0 && (mask || bg_colour == 0))
+		if (obj_colour != 0 && (priority || bg_colour == 0))
 		{
 			return ((palette + 1) << 2) | palettes.obj_palettes[palette][obj_colour];
 		}
@@ -95,12 +96,12 @@ namespace coro_gb
 		assert(bg_count >= count);
 		bg_count -= count;
 
-		bg_colour0  >>= count;
-		bg_colour1  >>= count;
-		obj_colour0 >>= count;
-		obj_colour1 >>= count;
-		obj_palette >>= count;
-		obj_mask    >>= count;
+		bg_colour0   >>= count;
+		bg_colour1   >>= count;
+		obj_colour0  >>= count;
+		obj_colour1  >>= count;
+		obj_palette  >>= count;
+		obj_priority >>= count;
 	}
 
 	single_future<void> ppu::run()
@@ -109,327 +110,332 @@ namespace coro_gb
 
 		while (true)
 		{
-			bool bLCDOnBug = false;
-			if (!registers.lcd_control.lcd_enable)
+			try
 			{
-				stat_flag = false;
-				vblank_flag = false;
-				registers.lcd_y = 0;
-				registers.lcd_stat.mode = lcd_mode::power_off;
-				registers.lcd_stat.coincidence = false;
-				interrupts.lcd_enable.reset();
-				co_await interrupts.lcd_enable;
-				bLCDOnBug = true;
-			}
-
-			uint8_t window_line = 0;
-			bool window_triggered = false;
-
-			for (uint8_t y = 0; y < 144; ++y)
-			{
-				uint32_t line_start = scheduler.get_cycle_counter();
-				if (!bLCDOnBug)
-				{ }
-				else
-				{
-					line_start -= 8;
-				}
-
-				std::vector<sprite_attributes> sprites;
-				uint8_t sprite_size = 0;
-				if (!bLCDOnBug)
-				{
-					// sort sprites
-					update_stat(lcd_mode::oam_search, y);
-
-					sprite_size = registers.lcd_control.sprite_size ? 16 : 8;
-					if (registers.lcd_control.sprite_enable)
-					{
-						for (sprite_attributes sprite : oam)
-						{
-							if (sprite.y - 16 <= y && sprite.y - 16 + sprite_size > y)
-							{
-								if (registers.lcd_control.sprite_size)
-									sprite.tile_index &= 0xFE;
-								sprites.push_back(sprite);
-							}
-						}
-
-						if (sprites.size() > 10)
-						{
-							sprites.resize(10);
-						}
-						std::stable_sort(std::begin(sprites), std::end(sprites), [](const sprite_attributes& lhs, const sprite_attributes& rhs) { return lhs.x < rhs.x; });
-					}
-
-					co_await cycles(cycle_scheduler::priority::write, 80);
-					sprite_size = registers.lcd_control.sprite_size ? 16 : 8;
-				}
-				else
-				{
-					// LCD On Bug
-					update_stat(lcd_mode::initial_power_on, y);
-
-					co_await cycles(cycle_scheduler::priority::write, 72);
-					bLCDOnBug = false;
-				}
-
-				// draw line
-				update_stat(lcd_mode::lcd_write, y);
-
-				const uint16_t tiledata_base_addr_low = registers.lcd_control.tiledata_select ? 0x0000 : 0x1000;
-				const uint16_t tiledata_base_addr_high = 0x0000;
-				const uint16_t bg_tilemap_base_addr = registers.lcd_control.bg_tilemap_select ? 0x1C00 : 0x1800;
-				const uint16_t spritedata_base_addr = 0x0000;
-				window_triggered = (window_triggered || y == registers.window_y);
-				const bool window_enable = registers.lcd_control.window_enable && window_triggered && registers.window_x < 167;
-				const uint16_t window_tilemap_base_addr = registers.lcd_control.window_tilemap_select ? 0x1C00 : 0x1800;
-
-				bool bg_enable = registers.lcd_control.bg_enable;
-				uint8_t tile_x = registers.lcd_scroll_x / 8;
-				uint8_t tile_y = (((uint16_t)y + registers.lcd_scroll_y) / 8) % 32;
-				uint16_t sub_tile_y = ((uint16_t)y + registers.lcd_scroll_y) % 8;
-
-				fifo_t fifo; // 8 pixel FIFO
-
-				if (bg_enable)
-				{
-					//co_await cycles(6);
-					uint8_t tile_index = vram[bg_tilemap_base_addr + tile_y * 32 + tile_x];
-					uint16_t tile_data_base_addr = (tile_index < 0x80 ? tiledata_base_addr_low : tiledata_base_addr_high);
-					uint16_t tile_data_index = tile_data_base_addr + ((uint16_t)tile_index * 8 + sub_tile_y) * 2;
-					uint8_t low_bits = vram[tile_data_index];
-					uint8_t high_bits = vram[tile_data_index + 1];
-					fifo.apply_bg(low_bits, high_bits);
-				}
-				else
-				{
-					fifo.apply_bg(0, 0);
-				}
-
-				uint8_t subtile_scroll_x = registers.lcd_scroll_x % 8;
-				fifo.discard(subtile_scroll_x);
-
-				bool in_window = false;
-				uint8_t window_x = -1;
-				uint8_t current_sprite = 0;
-				uint8_t sprite_x = 0;
-
-				// discard first 8 pixels to allow sprites to "scroll on"
-				// and to allow the window to be at 0-6 position
-				for (uint8_t x = 0; x < 8; )
-				{
-					while (current_sprite < sprites.size() && sprites[current_sprite].x == sprite_x)
-					{
-						uint8_t sprite_suby = sprites[current_sprite].flags.flip_y ? sprite_size - 1 - (y - (sprites[current_sprite].y - 16)) : y - (sprites[current_sprite].y - 16);
-						uint16_t tile_data_index = spritedata_base_addr + ((uint16_t)sprites[current_sprite].tile_index * 8 + sprite_suby) * 2;
-						uint8_t low_bits = vram[tile_data_index];
-						uint8_t high_bits = vram[tile_data_index + 1];
-
-						fifo.apply_sprite(low_bits, high_bits, sprites[current_sprite].flags);
-						++current_sprite;
-					}
-
-					uint8_t complete = std::min<uint8_t>(fifo.bg_count, 8 - x);
-					if (window_enable && !in_window)
-					{
-						complete = std::min<uint8_t>(complete, registers.window_x - window_x);
-					}
-					if (current_sprite < sprites.size())
-					{
-						complete = std::min<uint8_t>(complete, sprites[current_sprite].x - sprite_x);
-					}
-
-					fifo.discard(complete);
-					x += complete;
-					window_x += complete;
-					sprite_x += complete;
-
-					if (window_enable && !in_window && window_x == registers.window_x)
-					{
-						in_window = true;
-						tile_y = (window_line / 8) % 32;
-						sub_tile_y = window_line % 8;
-						++window_line;
-
-						{
-							tile_x = 0;
-							uint8_t tile_index = vram[window_tilemap_base_addr + tile_y * 32 + tile_x];
-							uint16_t tile_data_base_addr = (tile_index < 0x80 ? tiledata_base_addr_low : tiledata_base_addr_high);
-							uint16_t tile_data_index = tile_data_base_addr + ((uint16_t)tile_index * 8 + sub_tile_y) * 2;
-							uint8_t low_bits = vram[tile_data_index];
-							uint8_t high_bits = vram[tile_data_index + 1];
-							fifo.apply_bg(low_bits, high_bits);
-							//co_await cycles(6);
-							tile_x = 1;
-						}
-					}
-					else if (fifo.bg_count == 0)
-					{
-						if (in_window)
-						{
-							uint8_t tile_index = vram[window_tilemap_base_addr + tile_y * 32 + tile_x];
-							uint16_t tile_data_base_addr = (tile_index < 0x80 ? tiledata_base_addr_low : tiledata_base_addr_high);
-							uint16_t tile_data_index = tile_data_base_addr + ((uint16_t)tile_index * 8 + sub_tile_y) * 2;
-							uint8_t low_bits = vram[tile_data_index];
-							uint8_t high_bits = vram[tile_data_index + 1];
-							fifo.apply_bg(low_bits, high_bits);
-							//co_await cycles(6);
-							tile_x = (tile_x + 1) % 32;
-						}
-						else if (bg_enable)
-						{
-							uint8_t tile_index = vram[bg_tilemap_base_addr + tile_y * 32 + tile_x];
-							uint16_t tile_data_base_addr = (tile_index < 0x80 ? tiledata_base_addr_low : tiledata_base_addr_high);
-							uint16_t tile_data_index = tile_data_base_addr + ((uint16_t)tile_index * 8 + sub_tile_y) * 2;
-							uint8_t low_bits = vram[tile_data_index];
-							uint8_t high_bits = vram[tile_data_index + 1];
-							fifo.apply_bg(low_bits, high_bits);
-							//co_await cycles(6);
-							tile_x = (tile_x + 1) % 32;
-						}
-						else
-						{
-							fifo.apply_bg(0, 0);
-						}
-					}
-				}
-
-				// draw 160 pixels
-				for (uint8_t x = 0; x < 160; )
-				{
-					while (current_sprite < sprites.size() && sprites[current_sprite].x == sprite_x)
-					{
-						uint8_t sprite_suby = sprites[current_sprite].flags.flip_y ? sprite_size - 1 - (y - (sprites[current_sprite].y - 16)) : y - (sprites[current_sprite].y - 16);
-						uint16_t tile_data_index = spritedata_base_addr + ((uint16_t)sprites[current_sprite].tile_index * 8 + sprite_suby) * 2;
-						uint8_t low_bits = vram[tile_data_index];
-						uint8_t high_bits = vram[tile_data_index + 1];
-
-						fifo.apply_sprite(low_bits, high_bits, sprites[current_sprite].flags);
-						++current_sprite;
-					}
-
-					uint8_t complete = std::min<uint8_t>(fifo.bg_count, 160 - x);
-					if (window_enable && !in_window)
-					{
-						complete = std::min<uint8_t>(complete, registers.window_x - window_x);
-					}
-					if (current_sprite < sprites.size())
-					{
-						complete = std::min<uint8_t>(complete, sprites[current_sprite].x - sprite_x);
-					}
-
-					for (int i = 0; i < complete; ++i)
-					{
-						screen[y * 160 + x + i] = fifo.pop(registers.palettes);
-					}
-					x += complete;
-					window_x += complete;
-					sprite_x += complete;
-
-					if (window_enable && !in_window && window_x == registers.window_x)
-					{
-						in_window = true;
-						tile_y = (window_line / 8) % 32;
-						sub_tile_y = window_line % 8;
-						++window_line;
-
-						{
-							tile_x = 0;
-							uint8_t tile_index = vram[window_tilemap_base_addr + tile_y * 32 + tile_x];
-							uint16_t tile_data_base_addr = (tile_index < 0x80 ? tiledata_base_addr_low : tiledata_base_addr_high);
-							uint16_t tile_data_index = tile_data_base_addr + ((uint16_t)tile_index * 8 + sub_tile_y) * 2;
-							uint8_t low_bits = vram[tile_data_index];
-							uint8_t high_bits = vram[tile_data_index + 1];
-							fifo.apply_bg(low_bits, high_bits);
-							//co_await cycles(6);
-							tile_x = 1;
-						}
-					}
-					else if (fifo.bg_count == 0)
-					{
-						if (in_window)
-						{
-							uint8_t tile_index = vram[window_tilemap_base_addr + tile_y * 32 + tile_x];
-							uint16_t tile_data_base_addr = (tile_index < 0x80 ? tiledata_base_addr_low : tiledata_base_addr_high);
-							uint16_t tile_data_index = tile_data_base_addr + ((uint16_t)tile_index * 8 + sub_tile_y) * 2;
-							uint8_t low_bits = vram[tile_data_index];
-							uint8_t high_bits = vram[tile_data_index + 1];
-							fifo.apply_bg(low_bits, high_bits);
-							//co_await cycles(6);
-							tile_x = (tile_x + 1) % 32;
-						}
-						else if (bg_enable)
-						{
-							uint8_t tile_index = vram[bg_tilemap_base_addr + tile_y * 32 + tile_x];
-							uint16_t tile_data_base_addr = (tile_index < 0x80 ? tiledata_base_addr_low : tiledata_base_addr_high);
-							uint16_t tile_data_index = tile_data_base_addr + ((uint16_t)tile_index * 8 + sub_tile_y) * 2;
-							uint8_t low_bits = vram[tile_data_index];
-							uint8_t high_bits = vram[tile_data_index + 1];
-							fifo.apply_bg(low_bits, high_bits);
-							//co_await cycles(6);
-							tile_x = (tile_x + 1) % 32;
-						}
-						else
-						{
-							fifo.apply_bg(0, 0);
-						}
-					}
-				}
-
-				co_await cycles(cycle_scheduler::priority::write, 174); //? Geikko says this should be 173.5
-
-				// h blank
-				update_stat(lcd_mode::h_blank, y);
-
-				co_await cycles(cycle_scheduler::priority::write, (line_start + 456) - scheduler.get_cycle_counter());
-			}
-
-			display_callback();
-
-			//v blank
-			update_stat(lcd_mode::v_blank, 144);
-
-			co_await interruptible_cycles(cycle_scheduler::priority::write, 456);
-			if (!registers.lcd_control.lcd_enable)
-			{
-				continue;
-			}
-
-			for (uint8_t y = 145; y < 153; ++y)
-			{
-				update_stat(lcd_mode::v_blank, y);
-
-				co_await interruptible_cycles(cycle_scheduler::priority::write, 456);
+				bool bLCDOnBug = false;
+				[[unlikely]]
 				if (!registers.lcd_control.lcd_enable)
 				{
-					break;
+					stat_flag = false;
+					vblank_flag = false;
+					registers.lcd_y = 0;
+					registers.lcd_stat.mode = lcd_mode::power_off;
+					registers.lcd_stat.coincidence = false;
+					interrupts.lcd_enable.reset();
+					co_await interrupts.lcd_enable;
+					bLCDOnBug = true;
 				}
-			}
 
-			if (!registers.lcd_control.lcd_enable)
+				uint8_t window_line = 0;
+				bool window_triggered = false;
+
+				for (uint8_t y = 0; y < 144; ++y)
+				{
+					uint32_t line_start = scheduler.get_cycle_counter();
+					std::vector<sprite_attributes> sprites;
+					uint8_t sprite_size = 0;
+
+					[[unlikely]]
+					if (y==0 && bLCDOnBug)
+					{
+						line_start -= 8;
+						update_stat(lcd_mode::initial_power_on, y);
+
+						co_await interruptible_cycles(cycle_scheduler::priority::write, 72);
+						bLCDOnBug = false;
+					}
+					else
+					{
+						// sort sprites
+						update_stat(lcd_mode::oam_search, y);
+
+						sprite_size = registers.lcd_control.sprite_size ? 16 : 8;
+						if (registers.lcd_control.sprite_enable)
+						{
+							for (sprite_attributes sprite : oam)
+							{
+								if (sprite.y - 16 <= y && sprite.y - 16 + sprite_size > y)
+								{
+									if (registers.lcd_control.sprite_size)
+										sprite.tile_index &= 0xFE;
+									sprites.push_back(sprite);
+								}
+							}
+
+							if (sprites.size() > 10)
+							{
+								sprites.resize(10);
+							}
+							std::stable_sort(std::begin(sprites), std::end(sprites), [](const sprite_attributes& lhs, const sprite_attributes& rhs) { return lhs.x < rhs.x; });
+						}
+
+						co_await interruptible_cycles(cycle_scheduler::priority::write, 80);
+						sprite_size = registers.lcd_control.sprite_size ? 16 : 8;
+					}
+
+					// draw line
+					update_stat(lcd_mode::lcd_write, y);
+
+					const uint16_t tiledata_base_addr_low = registers.lcd_control.tiledata_select ? 0x0000 : 0x1000;
+					const uint16_t tiledata_base_addr_high = 0x0000;
+					const uint16_t bg_tilemap_base_addr = registers.lcd_control.bg_tilemap_select ? 0x1C00 : 0x1800;
+					const uint16_t spritedata_base_addr = 0x0000;
+					window_triggered = (window_triggered || y == registers.window_y);
+					const bool window_enable = registers.lcd_control.window_enable && window_triggered && registers.window_x < 167;
+					const uint16_t window_tilemap_base_addr = registers.lcd_control.window_tilemap_select ? 0x1C00 : 0x1800;
+
+					bool bg_enable = registers.lcd_control.bg_enable;
+					uint8_t tile_x = registers.lcd_scroll_x / 8;
+					uint8_t tile_y = (((uint16_t)y + registers.lcd_scroll_y) / 8) % 32;
+					uint16_t sub_tile_y = ((uint16_t)y + registers.lcd_scroll_y) % 8;
+
+					fifo_t fifo; // 8 pixel FIFO
+
+					uint32_t fetch_start = scheduler.get_cycle_counter();
+					co_await interruptible_cycles(cycle_scheduler::priority::read, 6);
+					if (bg_enable)
+					{
+						uint8_t tile_index = vram[bg_tilemap_base_addr + tile_y * 32 + tile_x];
+						uint16_t tile_data_base_addr = (tile_index < 0x80 ? tiledata_base_addr_low : tiledata_base_addr_high);
+						uint16_t tile_data_index = tile_data_base_addr + ((uint16_t)tile_index * 8 + sub_tile_y) * 2;
+						uint8_t low_bits = vram[tile_data_index];
+						uint8_t high_bits = vram[tile_data_index + 1];
+						fifo.apply_bg(low_bits, high_bits);
+						fetch_start = scheduler.get_cycle_counter();
+					}
+					else
+					{
+						fifo.apply_bg(0, 0);
+					}
+
+					uint8_t subtile_scroll_x = registers.lcd_scroll_x % 8;
+					co_await interruptible_cycles(cycle_scheduler::priority::read, subtile_scroll_x);
+					fifo.discard(subtile_scroll_x);
+
+					bool in_window = false;
+					uint8_t window_x = -1;
+					uint8_t current_sprite = 0;
+					uint8_t sprite_x = 0;
+
+					// discard first 8 pixels to allow sprites to "scroll on"
+					// and to allow the window to be at 0-6 position
+					for (uint8_t x = 0; x < 8; )
+					{
+						while (current_sprite < sprites.size() && sprites[current_sprite].x == sprite_x)
+						{
+							if (fetch_start != scheduler.get_cycle_counter() && (int32_t)((fetch_start + 6) - scheduler.get_cycle_counter()) > 0)
+								co_await interruptible_cycles(cycle_scheduler::priority::read, (fetch_start + 6) - scheduler.get_cycle_counter());
+							uint8_t sprite_suby = sprites[current_sprite].flags.flip_y ? sprite_size - 1 - (y - (sprites[current_sprite].y - 16)) : y - (sprites[current_sprite].y - 16);
+							uint16_t tile_data_index = spritedata_base_addr + ((uint16_t)sprites[current_sprite].tile_index * 8 + sprite_suby) * 2;
+							uint8_t low_bits = vram[tile_data_index];
+							uint8_t high_bits = vram[tile_data_index + 1];
+
+							fifo.apply_sprite(low_bits, high_bits, sprites[current_sprite].flags);
+							++current_sprite;
+							fetch_start = scheduler.get_cycle_counter();
+						}
+
+						uint8_t complete = std::min<uint8_t>(fifo.bg_count, 8 - x);
+						if (window_enable && !in_window)
+						{
+							complete = std::min<uint8_t>(complete, registers.window_x - window_x);
+						}
+						if (current_sprite < sprites.size())
+						{
+							complete = std::min<uint8_t>(complete, sprites[current_sprite].x - sprite_x);
+						}
+
+						co_await interruptible_cycles(cycle_scheduler::priority::read, complete);
+						fifo.discard(complete);
+						x += complete;
+						window_x += complete;
+						sprite_x += complete;
+
+						if (window_enable && !in_window && window_x == registers.window_x)
+						{
+							in_window = true;
+							tile_y = (window_line / 8) % 32;
+							sub_tile_y = window_line % 8;
+							++window_line;
+
+							{
+								co_await interruptible_cycles(cycle_scheduler::priority::read, 6);
+								tile_x = 0;
+								uint8_t tile_index = vram[window_tilemap_base_addr + tile_y * 32 + tile_x];
+								uint16_t tile_data_base_addr = (tile_index < 0x80 ? tiledata_base_addr_low : tiledata_base_addr_high);
+								uint16_t tile_data_index = tile_data_base_addr + ((uint16_t)tile_index * 8 + sub_tile_y) * 2;
+								uint8_t low_bits = vram[tile_data_index];
+								uint8_t high_bits = vram[tile_data_index + 1];
+								fifo.apply_bg(low_bits, high_bits);
+								tile_x = 1;
+								fetch_start = scheduler.get_cycle_counter();
+							}
+						}
+						else if (fifo.bg_count == 0)
+						{
+							if (in_window)
+							{
+								if (fetch_start != scheduler.get_cycle_counter() && (int32_t)((fetch_start + 6) - scheduler.get_cycle_counter()) > 0)
+									co_await interruptible_cycles(cycle_scheduler::priority::read, (fetch_start + 6) - scheduler.get_cycle_counter());
+								uint8_t tile_index = vram[window_tilemap_base_addr + tile_y * 32 + tile_x];
+								uint16_t tile_data_base_addr = (tile_index < 0x80 ? tiledata_base_addr_low : tiledata_base_addr_high);
+								uint16_t tile_data_index = tile_data_base_addr + ((uint16_t)tile_index * 8 + sub_tile_y) * 2;
+								uint8_t low_bits = vram[tile_data_index];
+								uint8_t high_bits = vram[tile_data_index + 1];
+								fifo.apply_bg(low_bits, high_bits);
+								tile_x = (tile_x + 1) % 32;
+								fetch_start = scheduler.get_cycle_counter();
+							}
+							else if (bg_enable)
+							{
+								if (fetch_start != scheduler.get_cycle_counter() && (int32_t)((fetch_start + 6) - scheduler.get_cycle_counter()) > 0)
+									co_await interruptible_cycles(cycle_scheduler::priority::read, (fetch_start + 6) - scheduler.get_cycle_counter());
+								uint8_t tile_index = vram[bg_tilemap_base_addr + tile_y * 32 + tile_x];
+								uint16_t tile_data_base_addr = (tile_index < 0x80 ? tiledata_base_addr_low : tiledata_base_addr_high);
+								uint16_t tile_data_index = tile_data_base_addr + ((uint16_t)tile_index * 8 + sub_tile_y) * 2;
+								uint8_t low_bits = vram[tile_data_index];
+								uint8_t high_bits = vram[tile_data_index + 1];
+								fifo.apply_bg(low_bits, high_bits);
+								tile_x = (tile_x + 1) % 32;
+								fetch_start = scheduler.get_cycle_counter();
+							}
+							else
+							{
+								fifo.apply_bg(0, 0);
+							}
+						}
+					}
+
+					// draw 160 pixels
+					for (uint8_t x = 0; x < 160; )
+					{
+						while (current_sprite < sprites.size() && sprites[current_sprite].x == sprite_x)
+						{
+							if (fetch_start != scheduler.get_cycle_counter() && (int32_t)((fetch_start + 6) - scheduler.get_cycle_counter()) > 0)
+								co_await interruptible_cycles(cycle_scheduler::priority::read, (fetch_start + 6) - scheduler.get_cycle_counter());
+							uint8_t sprite_suby = sprites[current_sprite].flags.flip_y ? sprite_size - 1 - (y - (sprites[current_sprite].y - 16)) : y - (sprites[current_sprite].y - 16);
+							uint16_t tile_data_index = spritedata_base_addr + ((uint16_t)sprites[current_sprite].tile_index * 8 + sprite_suby) * 2;
+							uint8_t low_bits = vram[tile_data_index];
+							uint8_t high_bits = vram[tile_data_index + 1];
+
+							fifo.apply_sprite(low_bits, high_bits, sprites[current_sprite].flags);
+							++current_sprite;
+							fetch_start = scheduler.get_cycle_counter();
+						}
+
+						uint8_t complete = std::min<uint8_t>(fifo.bg_count, 160 - x);
+						if (window_enable && !in_window)
+						{
+							complete = std::min<uint8_t>(complete, registers.window_x - window_x);
+						}
+						if (current_sprite < sprites.size())
+						{
+							complete = std::min<uint8_t>(complete, sprites[current_sprite].x - sprite_x);
+						}
+
+						co_await interruptible_cycles(cycle_scheduler::priority::read, complete);
+						for (int i = 0; i < complete; ++i)
+						{
+							screen[y * 160 + x + i] = fifo.pop(registers.palettes);
+						}
+						x += complete;
+						window_x += complete;
+						sprite_x += complete;
+
+						if (window_enable && !in_window && window_x == registers.window_x)
+						{
+							in_window = true;
+							tile_y = (window_line / 8) % 32;
+							sub_tile_y = window_line % 8;
+							++window_line;
+
+							{
+								co_await interruptible_cycles(cycle_scheduler::priority::read, 6);
+								tile_x = 0;
+								uint8_t tile_index = vram[window_tilemap_base_addr + tile_y * 32 + tile_x];
+								uint16_t tile_data_base_addr = (tile_index < 0x80 ? tiledata_base_addr_low : tiledata_base_addr_high);
+								uint16_t tile_data_index = tile_data_base_addr + ((uint16_t)tile_index * 8 + sub_tile_y) * 2;
+								uint8_t low_bits = vram[tile_data_index];
+								uint8_t high_bits = vram[tile_data_index + 1];
+								fifo.apply_bg(low_bits, high_bits);
+								tile_x = 1;
+								fetch_start = scheduler.get_cycle_counter();
+							}
+						}
+						else if (fifo.bg_count == 0)
+						{
+							if (in_window)
+							{
+								if (fetch_start != scheduler.get_cycle_counter() && (int32_t)((fetch_start + 6) - scheduler.get_cycle_counter()) > 0)
+									co_await interruptible_cycles(cycle_scheduler::priority::read, (fetch_start + 6) - scheduler.get_cycle_counter());
+								uint8_t tile_index = vram[window_tilemap_base_addr + tile_y * 32 + tile_x];
+								uint16_t tile_data_base_addr = (tile_index < 0x80 ? tiledata_base_addr_low : tiledata_base_addr_high);
+								uint16_t tile_data_index = tile_data_base_addr + ((uint16_t)tile_index * 8 + sub_tile_y) * 2;
+								uint8_t low_bits = vram[tile_data_index];
+								uint8_t high_bits = vram[tile_data_index + 1];
+								fifo.apply_bg(low_bits, high_bits);
+								tile_x = (tile_x + 1) % 32;
+								fetch_start = scheduler.get_cycle_counter();
+							}
+							else if (bg_enable)
+							{
+								if (fetch_start != scheduler.get_cycle_counter() && (int32_t)((fetch_start + 6) - scheduler.get_cycle_counter()) > 0)
+									co_await interruptible_cycles(cycle_scheduler::priority::read, (fetch_start + 6) - scheduler.get_cycle_counter());
+								uint8_t tile_index = vram[bg_tilemap_base_addr + tile_y * 32 + tile_x];
+								uint16_t tile_data_base_addr = (tile_index < 0x80 ? tiledata_base_addr_low : tiledata_base_addr_high);
+								uint16_t tile_data_index = tile_data_base_addr + ((uint16_t)tile_index * 8 + sub_tile_y) * 2;
+								uint8_t low_bits = vram[tile_data_index];
+								uint8_t high_bits = vram[tile_data_index + 1];
+								fifo.apply_bg(low_bits, high_bits);
+								tile_x = (tile_x + 1) % 32;
+								fetch_start = scheduler.get_cycle_counter();
+							}
+							else
+							{
+								fifo.apply_bg(0, 0);
+							}
+						}
+					}
+
+					assert((int32_t)(scheduler.get_cycle_counter() - (line_start + 80 + 174)) >= 0);
+					//co_await interruptible_cycles(cycle_scheduler::priority::write, 174); //? Geikko says this should be 173.5
+
+					// h blank
+					update_stat(lcd_mode::h_blank, y);
+
+					co_await interruptible_cycles(cycle_scheduler::priority::write, (line_start + 456) - scheduler.get_cycle_counter());
+				}
+
+				display_callback();
+
+				//v blank
+				update_stat(lcd_mode::v_blank, 144);
+
+				co_await interruptible_cycles(cycle_scheduler::priority::write, 456);
+
+				for (uint8_t y = 145; y < 153; ++y)
+				{
+					update_stat(lcd_mode::v_blank, y);
+
+					co_await interruptible_cycles(cycle_scheduler::priority::write, 456);
+				}
+
+				// line 153 is weird
+				update_stat(lcd_mode::v_blank, 153);
+				co_await interruptible_cycles(cycle_scheduler::priority::write, 4);
+
+				registers.lcd_y = 0;
+				co_await interruptible_cycles(cycle_scheduler::priority::write, 4);
+
+				registers.lcd_stat.coincidence = 0;
+				update_stat(lcd_mode::v_blank, 0);
+				co_await interruptible_cycles(cycle_scheduler::priority::write, 456 - 8);
+			}
+			catch (interrupted i)
 			{
+				// the ppu was turned off so we need to go back to the beginning
 				continue;
 			}
-
-			// line 153 is weird
-			update_stat(lcd_mode::v_blank, 153);
-			co_await interruptible_cycles(cycle_scheduler::priority::write, 4);
-			if (!registers.lcd_control.lcd_enable)
-			{
-				continue;
-			}
-
-			registers.lcd_y = 0;
-			co_await interruptible_cycles(cycle_scheduler::priority::write, 4);
-			if (!registers.lcd_control.lcd_enable)
-			{
-				continue;
-			}
-
-			registers.lcd_stat.coincidence = 0;
-			update_stat(lcd_mode::v_blank, 0);
-			co_await interruptible_cycles(cycle_scheduler::priority::write, 456-8);
 		}
 	}
 
@@ -648,25 +654,32 @@ namespace coro_gb
 			interrupts.dma_trigger.reset();
 			co_await interrupts.dma_trigger;
 
-			bool was_interrupted = false;
 			uint8_t shadow_dma_start;
-			do
+			while (true)
 			{
-				co_await scheduler.cycles(cycle_scheduler::unit::dma, cycle_scheduler::priority::write, 8);
-
-				shadow_dma_start = registers.dma_start;
-				if (shadow_dma_start >= 0xE0)
+				try
 				{
-					// trying to DMA from 0xE000-0xFFFF will actually read from 0xC000-0xDFFF (wram mirroring)
-					// DMA'ing from 0xFE00 will actually read from 0xDE00 not OAM!
-					shadow_dma_start -= 0x20;
+					co_await scheduler.cycles(cycle_scheduler::unit::dma, cycle_scheduler::priority::write, 8);
+
+					shadow_dma_start = registers.dma_start;
+					if (shadow_dma_start >= 0xE0)
+					{
+						// trying to DMA from 0xE000-0xFFFF will actually read from 0xC000-0xDFFF (wram mirroring)
+						// DMA'ing from 0xFE00 will actually read from 0xDE00 not OAM!
+						shadow_dma_start -= 0x20;
+					}
+
+					// block access to oam
+					memory.set_mapping({ 0xFE00, 0xFEA0, nullptr, nullptr });
+
+					co_await scheduler.interruptible_cycles(interrupts.dma_trigger, cycle_scheduler::unit::dma, cycle_scheduler::priority::write, 640);
+					break;
 				}
-
-				// block access to oam
-				memory.set_mapping({ 0xFE00, 0xFEA0, nullptr, nullptr });
-
-				was_interrupted = co_await scheduler.interruptible_cycles(interrupts.dma_trigger, cycle_scheduler::unit::dma, cycle_scheduler::priority::write, 640);
-			} while (was_interrupted);
+				catch (interrupted i)
+				{
+					continue;
+				}
+			}
 
 			// perform DMA copy
 			for (uint8_t offset = 0; offset < 0xA0; ++offset)

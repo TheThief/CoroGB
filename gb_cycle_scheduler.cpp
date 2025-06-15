@@ -47,7 +47,7 @@ namespace coro_gb
 		scheduler.queue(wait_until, unit, priority, handle);
 	}
 
-	bool cycle_scheduler::awaitable_cycles_interruptible::await_resume() noexcept
+	bool cycle_scheduler::awaitable_cycles_interruptible::await_resume()
 	{
 		awaited_interrupt.set_callback(nullptr);
 
@@ -57,7 +57,8 @@ namespace coro_gb
 		{
 			// still in cycle queue so must be interrupt
 			scheduler.queued.erase(it);
-			return true;
+			throw interrupted();
+			//return true;
 		}
 		else
 		{
