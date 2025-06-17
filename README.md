@@ -189,11 +189,7 @@ Notes:
 | rom 512kb   | :+1:       | :+1:   |
 | rom 1Mb     | :+1:       | :+1:   |
 | rom 2Mb     | :+1:       | :+1:   |
-| ram         | :+1:       | :x:    |
-
-Notes:
-
-* Ram test fails due to not implementing cart ram mirror and not restricting cart ram to 4 bits
+| ram         | :+1:       | :+1:   |
 
 #### MBC5
 

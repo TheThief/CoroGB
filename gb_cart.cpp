@@ -249,18 +249,10 @@ namespace coro_gb
 	void cart::mbc_base::map_ram(uint8_t ram_bank)
 	{
 		[[likely]]
-		if (ram.size() > 0)
+		if (ram.size() >= 0x2000) // banked ram - ram smaller than 8 kiB must be implemented in mbc
 		{
-			if (ram.size() > 0x2000) // banked ram
-			{
-				uint8_t* ram_data = ram.data() + ((ram_bank * 0x2000) % ram.size());
-				mapped_to->set_mapping({ 0xA000, 0xBFFF, ram_data, ram_data });
-			}
-			else // unbanked ram
-			{
-				uint8_t* ram_data = ram.data();
-				mapped_to->set_mapping({ 0xA000, (uint16_t)(0xA000 + ram.size() - 1), ram_data, ram_data });
-			}
+			uint8_t* ram_data = ram.data() + ((ram_bank * 0x2000) % ram.size());
+			mapped_to->set_mapping({ 0xA000, 0xBFFF, ram_data, ram_data });
 		}
 	}
 
@@ -269,7 +261,7 @@ namespace coro_gb
 		[[likely]]
 		if (ram.size() > 0)
 		{
-			uint16_t mapping_end = ram.size() >= 0x2000 ? 0xBFFF : (uint16_t)(0xA000 + ram.size() - 1);
+			uint16_t mapping_end = 0xBFFF;
 			mapped_to->set_mapping({ 0xA000, mapping_end, nullptr, nullptr });
 		}
 	}
@@ -483,7 +475,7 @@ namespace coro_gb
 			{
 				if (ram_enabled)
 				{
-					map_ram(0);
+					map_ram();
 				}
 				else
 				{
@@ -499,6 +491,34 @@ namespace coro_gb
 			rom_bank = (rom_bank & 0xF0) | value;
 			uint8_t* rom_data = rom.data() + ((rom_bank * 0x4000) % rom.size());
 			mapped_to->set_mapping({ 0x4000, 0x7FFF, rom_data, nullptr });
+		}
+	}
+
+	void cart::mbc2::map_ram()
+	{
+		uint8_t* ram_data = ram.data();
+		mapped_to->set_mapping({ 0xA000, 0xBFFF, [this](uint16_t address)->uint8_t { return handle_ram_read(address); }, [this](uint16_t address, uint8_t value) { handle_ram_write(address, value); } });
+	}
+
+	uint8_t cart::mbc2::handle_ram_read(uint16_t address)
+	{
+		[[likely]]
+		if (ram_enabled)
+		{
+			return 0xF0 | ram[address&0x1FF];
+		}
+		else
+		{
+			return 0xFF;
+		}
+	}
+
+	void cart::mbc2::handle_ram_write(uint16_t address, uint8_t value)
+	{
+		[[likely]]
+		if (ram_enabled)
+		{
+			ram[address & 0x1FF] = (value & 0x0F);
 		}
 	}
 

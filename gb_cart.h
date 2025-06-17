@@ -112,6 +112,10 @@ namespace coro_gb
 			virtual void map_to(memory_mapper& in_memory_mapper) override;
 
 			void handle_write(uint16_t address, uint8_t value);
+
+			void map_ram();
+			uint8_t handle_ram_read(uint16_t address);
+			void handle_ram_write(uint16_t address, uint8_t value);
 		};
 		struct mbc3 final : public mbc_base
 		{
@@ -128,7 +132,6 @@ namespace coro_gb
 			virtual void load_ram(std::istream& f) override;
 			virtual void save_ram(std::ostream& f) override;
 
-			//uint8_t handle_read(uint16_t address);
 			void handle_write(uint16_t address, uint8_t value);
 		};
 		struct mbc5 final : public mbc_base

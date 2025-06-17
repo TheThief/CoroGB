@@ -121,6 +121,11 @@
       <FileType>Document</FileType>
     </ClInclude>
   </ItemGroup>
+  <ItemGroup>
+    <None Include="README.md">
+      <ExcludedFromBuild>true</ExcludedFromBuild>
+    </None>
+  </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
   </ImportGroup>
