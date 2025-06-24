@@ -106,22 +106,24 @@ Notes:
 
 | Test                        | mooneye-gb | CoroGB |
 |-----------------------------|------------|--------|
-| hblank ly scx timing GS     | :+1:       | :x:    |
+| hblank ly scx timing GS     | :+1:       | :+1:   |
 | intr 1 2 timing GS          | :+1:       | :+1:   |
-| intr 2 0 timing             | :+1:       | :x:    |
+| intr 2 0 timing             | :+1:       | :+1:   |
 | intr 2 mode0 timing         | :+1:       | :+1:   |
+| intr 2 mode0 timing sprites | :x:        | :x:    |
 | intr 2 mode3 timing         | :+1:       | :+1:   |
 | intr 2 oam ok timing        | :+1:       | :x:    |
-| intr 2 mode0 timing sprites | :x:        | :x:    |
 | lcdon timing dmgABCmgbS     | :x:        | :x:    |
 | lcdon write timing GS       | :x:        | :x:    |
-| stat irq blocking           | :x:        | :+1:   |
+| stat irq blocking           | :x:        | :x:    |
 | stat lyc onoff              | :x:        | :x:    |
 | vblank stat intr GS         | :+1:       | :x:    |
 
 Notes:
 
 * Yes, CoroGB implements stat IRQ blocking!
+* lcdon timing currently fails on oam
+* regression on irq blocking test
 
 #### Serial
 

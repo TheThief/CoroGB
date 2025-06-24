@@ -106,6 +106,9 @@ namespace coro_gb
 
 	single_future<void> ppu::run()
 	{
+		constexpr int bg_fetch_cycles = 5;
+		constexpr int sprite_fetch_cycles = 6;
+		constexpr int window_switch_cycles = 6;
 		dma_task = run_dma();
 
 		while (true)
@@ -138,11 +141,10 @@ namespace coro_gb
 					[[unlikely]]
 					if (y==0 && bLCDOnBug)
 					{
-						line_start -= 8;
+						line_start -= 6;
 						update_stat(lcd_mode::initial_power_on, y);
 
-						co_await interruptible_cycles(cycle_scheduler::priority::write, 72);
-						bLCDOnBug = false;
+						co_await interruptible_cycles(cycle_scheduler::priority::write, 74);
 					}
 					else
 					{
@@ -192,7 +194,7 @@ namespace coro_gb
 					fifo_t fifo; // 8 pixel FIFO
 
 					uint32_t fetch_start = scheduler.get_cycle_counter();
-					co_await interruptible_cycles(cycle_scheduler::priority::read, 6);
+					co_await interruptible_cycles(cycle_scheduler::priority::read, bg_fetch_cycles);
 					if (bg_enable)
 					{
 						uint8_t tile_index = vram[bg_tilemap_base_addr + tile_y * 32 + tile_x];
@@ -208,23 +210,18 @@ namespace coro_gb
 						fifo.apply_bg(0, 0);
 					}
 
-					uint8_t subtile_scroll_x = registers.lcd_scroll_x % 8;
-					co_await interruptible_cycles(cycle_scheduler::priority::read, subtile_scroll_x);
-					fifo.discard(subtile_scroll_x);
-
 					bool in_window = false;
 					uint8_t window_x = -1;
 					uint8_t current_sprite = 0;
 					uint8_t sprite_x = 0;
 
-					// discard first 8 pixels to allow sprites to "scroll on"
-					// and to allow the window to be at 0-6 position
-					for (uint8_t x = 0; x < 8; )
+					//x = 0 stupidly seems to be processed before SCX
 					{
 						while (current_sprite < sprites.size() && sprites[current_sprite].x == sprite_x)
 						{
-							if (fetch_start != scheduler.get_cycle_counter() && (int32_t)((fetch_start + 6) - scheduler.get_cycle_counter()) > 0)
-								co_await interruptible_cycles(cycle_scheduler::priority::read, (fetch_start + 6) - scheduler.get_cycle_counter());
+							if ((int32_t)((fetch_start + bg_fetch_cycles) - scheduler.get_cycle_counter()) > 0)
+								co_await interruptible_cycles(cycle_scheduler::priority::read, (fetch_start + bg_fetch_cycles) - scheduler.get_cycle_counter());
+							co_await interruptible_cycles(cycle_scheduler::priority::read, sprite_fetch_cycles);
 							uint8_t sprite_suby = sprites[current_sprite].flags.flip_y ? sprite_size - 1 - (y - (sprites[current_sprite].y - 16)) : y - (sprites[current_sprite].y - 16);
 							uint16_t tile_data_index = spritedata_base_addr + ((uint16_t)sprites[current_sprite].tile_index * 8 + sprite_suby) * 2;
 							uint8_t low_bits = vram[tile_data_index];
@@ -232,7 +229,100 @@ namespace coro_gb
 
 							fifo.apply_sprite(low_bits, high_bits, sprites[current_sprite].flags);
 							++current_sprite;
-							fetch_start = scheduler.get_cycle_counter();
+							//fetch_start = scheduler.get_cycle_counter();
+						}
+
+						uint8_t complete = std::min<uint8_t>(fifo.bg_count, 1);
+						if (window_enable && !in_window)
+						{
+							complete = std::min<uint8_t>(complete, registers.window_x - window_x);
+						}
+						if (current_sprite < sprites.size())
+						{
+							complete = std::min<uint8_t>(complete, sprites[current_sprite].x - sprite_x);
+						}
+
+						co_await interruptible_cycles(cycle_scheduler::priority::read, complete);
+						fifo.discard(complete);
+						window_x += complete;
+						sprite_x += complete;
+
+						if (window_enable && !in_window && window_x == registers.window_x)
+						{
+							in_window = true;
+							tile_y = (window_line / 8) % 32;
+							sub_tile_y = window_line % 8;
+							++window_line;
+
+							{
+								co_await interruptible_cycles(cycle_scheduler::priority::read, window_switch_cycles);
+								tile_x = 0;
+								uint8_t tile_index = vram[window_tilemap_base_addr + tile_y * 32 + tile_x];
+								uint16_t tile_data_base_addr = (tile_index < 0x80 ? tiledata_base_addr_low : tiledata_base_addr_high);
+								uint16_t tile_data_index = tile_data_base_addr + ((uint16_t)tile_index * 8 + sub_tile_y) * 2;
+								uint8_t low_bits = vram[tile_data_index];
+								uint8_t high_bits = vram[tile_data_index + 1];
+								fifo.apply_bg(low_bits, high_bits);
+								tile_x = 1;
+								fetch_start = scheduler.get_cycle_counter();
+							}
+						}
+						else if (fifo.bg_count == 0)
+						{
+							if (in_window)
+							{
+								if (fetch_start != scheduler.get_cycle_counter() && (int32_t)((fetch_start + bg_fetch_cycles) - scheduler.get_cycle_counter()) > 0)
+									co_await interruptible_cycles(cycle_scheduler::priority::read, (fetch_start + bg_fetch_cycles) - scheduler.get_cycle_counter());
+								uint8_t tile_index = vram[window_tilemap_base_addr + tile_y * 32 + tile_x];
+								uint16_t tile_data_base_addr = (tile_index < 0x80 ? tiledata_base_addr_low : tiledata_base_addr_high);
+								uint16_t tile_data_index = tile_data_base_addr + ((uint16_t)tile_index * 8 + sub_tile_y) * 2;
+								uint8_t low_bits = vram[tile_data_index];
+								uint8_t high_bits = vram[tile_data_index + 1];
+								fifo.apply_bg(low_bits, high_bits);
+								tile_x = (tile_x + 1) % 32;
+								fetch_start = scheduler.get_cycle_counter();
+							}
+							else if (bg_enable)
+							{
+								if (fetch_start != scheduler.get_cycle_counter() && (int32_t)((fetch_start + bg_fetch_cycles) - scheduler.get_cycle_counter()) > 0)
+									co_await interruptible_cycles(cycle_scheduler::priority::read, (fetch_start + bg_fetch_cycles) - scheduler.get_cycle_counter());
+								uint8_t tile_index = vram[bg_tilemap_base_addr + tile_y * 32 + tile_x];
+								uint16_t tile_data_base_addr = (tile_index < 0x80 ? tiledata_base_addr_low : tiledata_base_addr_high);
+								uint16_t tile_data_index = tile_data_base_addr + ((uint16_t)tile_index * 8 + sub_tile_y) * 2;
+								uint8_t low_bits = vram[tile_data_index];
+								uint8_t high_bits = vram[tile_data_index + 1];
+								fifo.apply_bg(low_bits, high_bits);
+								tile_x = (tile_x + 1) % 32;
+								fetch_start = scheduler.get_cycle_counter();
+							}
+							else
+							{
+								fifo.apply_bg(0, 0);
+							}
+						}
+					}
+
+					uint8_t subtile_scroll_x = registers.lcd_scroll_x % 8;
+					co_await interruptible_cycles(cycle_scheduler::priority::read, subtile_scroll_x);
+					fifo.discard(subtile_scroll_x);
+
+					// discard first 8 pixels to allow sprites to "scroll on"
+					// and to allow the window to be at 0-6 position
+					for (uint8_t x = 1; x < 8; )
+					{
+						while (current_sprite < sprites.size() && sprites[current_sprite].x == sprite_x)
+						{
+							if ((int32_t)((fetch_start + bg_fetch_cycles) - scheduler.get_cycle_counter()) > 0)
+								co_await interruptible_cycles(cycle_scheduler::priority::read, (fetch_start + bg_fetch_cycles) - scheduler.get_cycle_counter());
+							co_await interruptible_cycles(cycle_scheduler::priority::read, sprite_fetch_cycles);
+							uint8_t sprite_suby = sprites[current_sprite].flags.flip_y ? sprite_size - 1 - (y - (sprites[current_sprite].y - 16)) : y - (sprites[current_sprite].y - 16);
+							uint16_t tile_data_index = spritedata_base_addr + ((uint16_t)sprites[current_sprite].tile_index * 8 + sprite_suby) * 2;
+							uint8_t low_bits = vram[tile_data_index];
+							uint8_t high_bits = vram[tile_data_index + 1];
+
+							fifo.apply_sprite(low_bits, high_bits, sprites[current_sprite].flags);
+							++current_sprite;
+							//fetch_start = scheduler.get_cycle_counter();
 						}
 
 						uint8_t complete = std::min<uint8_t>(fifo.bg_count, 8 - x);
@@ -259,7 +349,7 @@ namespace coro_gb
 							++window_line;
 
 							{
-								co_await interruptible_cycles(cycle_scheduler::priority::read, 6);
+								co_await interruptible_cycles(cycle_scheduler::priority::read, window_switch_cycles);
 								tile_x = 0;
 								uint8_t tile_index = vram[window_tilemap_base_addr + tile_y * 32 + tile_x];
 								uint16_t tile_data_base_addr = (tile_index < 0x80 ? tiledata_base_addr_low : tiledata_base_addr_high);
@@ -275,8 +365,8 @@ namespace coro_gb
 						{
 							if (in_window)
 							{
-								if (fetch_start != scheduler.get_cycle_counter() && (int32_t)((fetch_start + 6) - scheduler.get_cycle_counter()) > 0)
-									co_await interruptible_cycles(cycle_scheduler::priority::read, (fetch_start + 6) - scheduler.get_cycle_counter());
+								if (fetch_start != scheduler.get_cycle_counter() && (int32_t)((fetch_start + bg_fetch_cycles) - scheduler.get_cycle_counter()) > 0)
+									co_await interruptible_cycles(cycle_scheduler::priority::read, (fetch_start + bg_fetch_cycles) - scheduler.get_cycle_counter());
 								uint8_t tile_index = vram[window_tilemap_base_addr + tile_y * 32 + tile_x];
 								uint16_t tile_data_base_addr = (tile_index < 0x80 ? tiledata_base_addr_low : tiledata_base_addr_high);
 								uint16_t tile_data_index = tile_data_base_addr + ((uint16_t)tile_index * 8 + sub_tile_y) * 2;
@@ -288,8 +378,8 @@ namespace coro_gb
 							}
 							else if (bg_enable)
 							{
-								if (fetch_start != scheduler.get_cycle_counter() && (int32_t)((fetch_start + 6) - scheduler.get_cycle_counter()) > 0)
-									co_await interruptible_cycles(cycle_scheduler::priority::read, (fetch_start + 6) - scheduler.get_cycle_counter());
+								if (fetch_start != scheduler.get_cycle_counter() && (int32_t)((fetch_start + bg_fetch_cycles) - scheduler.get_cycle_counter()) > 0)
+									co_await interruptible_cycles(cycle_scheduler::priority::read, (fetch_start + bg_fetch_cycles) - scheduler.get_cycle_counter());
 								uint8_t tile_index = vram[bg_tilemap_base_addr + tile_y * 32 + tile_x];
 								uint16_t tile_data_base_addr = (tile_index < 0x80 ? tiledata_base_addr_low : tiledata_base_addr_high);
 								uint16_t tile_data_index = tile_data_base_addr + ((uint16_t)tile_index * 8 + sub_tile_y) * 2;
@@ -311,8 +401,9 @@ namespace coro_gb
 					{
 						while (current_sprite < sprites.size() && sprites[current_sprite].x == sprite_x)
 						{
-							if (fetch_start != scheduler.get_cycle_counter() && (int32_t)((fetch_start + 6) - scheduler.get_cycle_counter()) > 0)
-								co_await interruptible_cycles(cycle_scheduler::priority::read, (fetch_start + 6) - scheduler.get_cycle_counter());
+							if ((int32_t)((fetch_start + bg_fetch_cycles) - scheduler.get_cycle_counter()) > 0)
+								co_await interruptible_cycles(cycle_scheduler::priority::read, (fetch_start + bg_fetch_cycles) - scheduler.get_cycle_counter());
+							co_await interruptible_cycles(cycle_scheduler::priority::read, sprite_fetch_cycles);
 							uint8_t sprite_suby = sprites[current_sprite].flags.flip_y ? sprite_size - 1 - (y - (sprites[current_sprite].y - 16)) : y - (sprites[current_sprite].y - 16);
 							uint16_t tile_data_index = spritedata_base_addr + ((uint16_t)sprites[current_sprite].tile_index * 8 + sprite_suby) * 2;
 							uint8_t low_bits = vram[tile_data_index];
@@ -350,7 +441,7 @@ namespace coro_gb
 							++window_line;
 
 							{
-								co_await interruptible_cycles(cycle_scheduler::priority::read, 6);
+								co_await interruptible_cycles(cycle_scheduler::priority::read, window_switch_cycles);
 								tile_x = 0;
 								uint8_t tile_index = vram[window_tilemap_base_addr + tile_y * 32 + tile_x];
 								uint16_t tile_data_base_addr = (tile_index < 0x80 ? tiledata_base_addr_low : tiledata_base_addr_high);
@@ -366,8 +457,8 @@ namespace coro_gb
 						{
 							if (in_window)
 							{
-								if (fetch_start != scheduler.get_cycle_counter() && (int32_t)((fetch_start + 6) - scheduler.get_cycle_counter()) > 0)
-									co_await interruptible_cycles(cycle_scheduler::priority::read, (fetch_start + 6) - scheduler.get_cycle_counter());
+								if (fetch_start != scheduler.get_cycle_counter() && (int32_t)((fetch_start + bg_fetch_cycles) - scheduler.get_cycle_counter()) > 0)
+									co_await interruptible_cycles(cycle_scheduler::priority::read, (fetch_start + bg_fetch_cycles) - scheduler.get_cycle_counter());
 								uint8_t tile_index = vram[window_tilemap_base_addr + tile_y * 32 + tile_x];
 								uint16_t tile_data_base_addr = (tile_index < 0x80 ? tiledata_base_addr_low : tiledata_base_addr_high);
 								uint16_t tile_data_index = tile_data_base_addr + ((uint16_t)tile_index * 8 + sub_tile_y) * 2;
@@ -379,8 +470,8 @@ namespace coro_gb
 							}
 							else if (bg_enable)
 							{
-								if (fetch_start != scheduler.get_cycle_counter() && (int32_t)((fetch_start + 6) - scheduler.get_cycle_counter()) > 0)
-									co_await interruptible_cycles(cycle_scheduler::priority::read, (fetch_start + 6) - scheduler.get_cycle_counter());
+								if (fetch_start != scheduler.get_cycle_counter() && (int32_t)((fetch_start + bg_fetch_cycles) - scheduler.get_cycle_counter()) > 0)
+									co_await interruptible_cycles(cycle_scheduler::priority::read, (fetch_start + bg_fetch_cycles) - scheduler.get_cycle_counter());
 								uint8_t tile_index = vram[bg_tilemap_base_addr + tile_y * 32 + tile_x];
 								uint16_t tile_data_base_addr = (tile_index < 0x80 ? tiledata_base_addr_low : tiledata_base_addr_high);
 								uint16_t tile_data_index = tile_data_base_addr + ((uint16_t)tile_index * 8 + sub_tile_y) * 2;
@@ -397,23 +488,20 @@ namespace coro_gb
 						}
 					}
 
-					assert((int32_t)(scheduler.get_cycle_counter() - (line_start + 80 + 174)) >= 0);
+					assert(bLCDOnBug || (int32_t)(scheduler.get_cycle_counter() - (line_start + 80+168+5 + subtile_scroll_x)) >= 0);
 					//co_await interruptible_cycles(cycle_scheduler::priority::write, 174); //? Geikko says this should be 173.5
 
 					// h blank
 					update_stat(lcd_mode::h_blank, y);
 
 					co_await interruptible_cycles(cycle_scheduler::priority::write, (line_start + 456) - scheduler.get_cycle_counter());
+					bLCDOnBug = false;
 				}
 
 				display_callback();
 
 				//v blank
-				update_stat(lcd_mode::v_blank, 144);
-
-				co_await interruptible_cycles(cycle_scheduler::priority::write, 456);
-
-				for (uint8_t y = 145; y < 153; ++y)
+				for (uint8_t y = 144; y < 153; ++y)
 				{
 					update_stat(lcd_mode::v_blank, y);
 
@@ -568,8 +656,7 @@ namespace coro_gb
 		{
 			stat_flag = true;
 		}
-		// should we be triggering an oam interrupt at the start of vblank? Sources vary on this
-		else if (mode == lcd_mode::v_blank && registers.lcd_stat.vblank_ienable)
+		else if (mode == lcd_mode::v_blank && (registers.lcd_stat.vblank_ienable || registers.lcd_stat.oam_ienable))
 		{
 			stat_flag = true;
 		}
