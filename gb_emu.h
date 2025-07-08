@@ -34,13 +34,13 @@ namespace coro_gb
 		emu();
 		~emu();
 
-		void start();
+		void start(bool break_on_ld_b_b = false);
 
 		void load_boot_rom(std::filesystem::path boot_rom_path);
 		void load_cart(cart& in_cart);
 
 		uint32_t get_cycle_counter() const;
-		void tick(uint32_t num_cycles);
+		test_status tick(uint32_t num_cycles);
 
 		bool is_screen_enabled() const;
 		const uint8_t* get_screen_buffer() const;
@@ -57,7 +57,7 @@ namespace coro_gb
 		ppu ppu;
 		std::array<std::array<uint32_t, 4>, 3> palette;
 		cart* loaded_cart = nullptr;
-		single_future<void> cpu_running;
+		single_future<test_status> cpu_running;
 		single_future<void> ppu_running;
 	};
 
@@ -78,12 +78,13 @@ namespace coro_gb
 		}
 	}
 
-	inline void emu::start()
+	inline void emu::start(bool break_on_ld_b_b /*= false*/)
 	{
 		if (!loaded_cart)
 		{
 			throw std::runtime_error("no cart loaded!");
 		}
+		cpu.break_on_ld_b_b = break_on_ld_b_b;
 		cpu_running = cpu.run();
 		ppu_running = ppu.run();
 	}
@@ -104,18 +105,20 @@ namespace coro_gb
 		return scheduler.get_cycle_counter();
 	}
 
-	inline void emu::tick(uint32_t num_cycles)
+	inline test_status emu::tick(uint32_t num_cycles)
 	{
 		scheduler.tick(num_cycles);
 
 		if (cpu_running.is_ready())
 		{
-			cpu_running.get();
+			return cpu_running.get();
 		}
 		if (ppu_running.is_ready())
 		{
 			ppu_running.get();
 		}
+
+		return test_status::running;
 	}
 
 	inline bool emu::is_screen_enabled() const

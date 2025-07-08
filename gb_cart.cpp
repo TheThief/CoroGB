@@ -554,7 +554,7 @@ namespace coro_gb
 			bool old_ram_enabled = ram_enabled;
 			ram_enabled = ((value & 0x0F) == 0x0A);
 
-			if (ram_enabled != !old_ram_enabled && ram.size() > 0)
+			if (ram_enabled != old_ram_enabled && ram.size() > 0)
 			{
 				if (ram_enabled)
 				{
@@ -670,7 +670,7 @@ namespace coro_gb
 			bool old_ram_enabled = ram_enabled;
 			ram_enabled = ((value & 0x0F) == 0x0A);
 
-			if (ram_enabled != !old_ram_enabled && ram.size() > 0)
+			if (ram_enabled != old_ram_enabled && ram.size() > 0)
 			{
 				if (ram_enabled)
 				{

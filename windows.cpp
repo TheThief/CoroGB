@@ -16,6 +16,8 @@
 #include <filesystem>
 #include <functional>
 #include <optional>
+#include <print>
+#include <unordered_map>
 
 template<uint32_t num_palette_entries, uint8_t bit_depth>
 struct bitmap_info
@@ -55,9 +57,17 @@ uint32_t sync_cycles;
 bool speedup_active = false;
 
 int32_t running_test = -1;
-std::wstring_view tests =
+std::vector<std::filesystem::path> tests;
+std::unordered_map<int, std::filesystem::path> test_paths =
 {
-	L"mooneye-gb_hwtests/acceptance/ppu",
+	{ ID_TESTS_MOONEYE_ACCEPTANCE_STAR,       L"tests/mooneye-test-suite/acceptance/"},
+	{ ID_TESTS_MOONEYE_ACCEPTANCE_BITS,       L"tests/mooneye-test-suite/acceptance/bits"},
+	{ ID_TESTS_MOONEYE_ACCEPTANCE_INSTR,      L"tests/mooneye-test-suite/acceptance/instr"},
+	{ ID_TESTS_MOONEYE_ACCEPTANCE_INTERRUPTS, L"tests/mooneye-test-suite/acceptance/interrupts"},
+	{ ID_TESTS_MOONEYE_ACCEPTANCE_OAMDMA,     L"tests/mooneye-test-suite/acceptance/oam_dma"},
+	{ ID_TESTS_MOONEYE_ACCEPTANCE_PPU,        L"tests/mooneye-test-suite/acceptance/ppu"},
+	{ ID_TESTS_MOONEYE_ACCEPTANCE_SERIAL,     L"tests/mooneye-test-suite/acceptance/serial"},
+	{ ID_TESTS_MOONEYE_ACCEPTANCE_TIMER,      L"tests/mooneye-test-suite/acceptance/timer"},
 };
 
 const TCHAR* appid = L"Thief.CoroGB.001";
@@ -67,6 +77,9 @@ bool init(HINSTANCE, int);
 LRESULT CALLBACK WndProc(HWND, UINT, WPARAM, LPARAM);
 std::optional<std::filesystem::path> show_open_dialog(HWND hwnd_owner);
 void display_callback();
+void start_tests(int id);
+void start_test();
+void next_test();
 
 int APIENTRY wWinMain(
 	_In_     HINSTANCE hInstance,
@@ -124,7 +137,7 @@ int APIENTRY wWinMain(
 				sync_time = std::chrono::high_resolution_clock::now();
 				sync_cycles = emu_instance->get_cycle_counter();
 
-				SetWindowTextW(main_window, (L"CoroGB - " + current_rom.filename().generic_wstring()).c_str());
+				SetWindowTextW(main_window, (L"CoroGB - " + current_rom.filename().native()).c_str());
 			}
 		}
 
@@ -144,13 +157,14 @@ int APIENTRY wWinMain(
 
 					coro_gb::cycles elapsed_time_in_cycles = std::chrono::duration_cast<coro_gb::cycles>(now_time - sync_time);
 
-					if (speedup_active)
-					{
-						elapsed_time_in_cycles *= 4;
-					}
 
 					uint32_t elapsed_cycles = now_cycles - sync_cycles;
 					elapsed_time_in_cycles -= coro_gb::cycles(elapsed_cycles);
+
+					if (running_test >= 0 || speedup_active)
+					{
+						elapsed_time_in_cycles *= 4;
+					}
 
 					// don't allow falling more than one frame behind - if we do, resync the timers
 					if (elapsed_time_in_cycles >= coro_gb::cycles(70'224))
@@ -162,7 +176,13 @@ int APIENTRY wWinMain(
 					if (elapsed_time_in_cycles >= coro_gb::cycles(5 * 456))
 					{
 						// tick at most 10 lines (4560 cycles) or we might miss the vsync
-						emu_instance->tick(10 * 456);
+						coro_gb::test_status test_status = emu_instance->tick(10 * 456);
+						if (test_status != coro_gb::test_status::running)
+						{
+							//std::println(L"Test {40} : {}");// , current_rom.stem().native(), (test_status == coro_gb::test_status::pass) ? +L"Pass" : +L"Fail");
+							std::wcout << std::format(L"Test {:40} : {}\n", current_rom.stem().native(), (test_status == coro_gb::test_status::pass) ? L"Pass" : L"Fail");
+							next_test();
+						}
 					}
 					else
 					{
@@ -210,12 +230,6 @@ ATOM register_window_class(HINSTANCE hInstance)
 
 bool init(HINSTANCE hInstance, int nCmdShow)
 {
-	//// show console
-	//AllocConsole();
-	//freopen("CONIN$", "r", stdin);
-	//freopen("CONOUT$", "w", stdout);
-	//freopen("CONOUT$", "w", stderr);
-
 	SetCurrentProcessExplicitAppUserModelID(appid);
 
 	register_window_class(hInstance);
@@ -347,7 +361,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT Message, WPARAM wParam, LPARAM lParam)
 						sync_time = std::chrono::high_resolution_clock::now();
 						sync_cycles = emu_instance->get_cycle_counter();
 
-						SetWindowTextW(hWnd, (L"CoroGB - " + current_rom.filename().generic_wstring()).c_str());
+						SetWindowTextW(hWnd, (L"CoroGB - " + current_rom.filename().native()).c_str());
 					}
 					return 0;
 				}
@@ -366,7 +380,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT Message, WPARAM wParam, LPARAM lParam)
 					sync_time = std::chrono::high_resolution_clock::now();
 					sync_cycles = emu_instance->get_cycle_counter();
 
-					SetWindowTextW(hWnd, (L"CoroGB - " + current_rom.filename().generic_wstring()).c_str());
+					SetWindowTextW(hWnd, (L"CoroGB - " + current_rom.filename().native()).c_str());
 					return 0;
 				}
 				case IDM_EXIT:
@@ -374,8 +388,24 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT Message, WPARAM wParam, LPARAM lParam)
 					DestroyWindow(hWnd);
 					return 0;
 				}
-				case ID_TESTS_RUNTESTS:
+				case ID_TESTS_MOONEYE_ACCEPTANCE_STAR:
+				case ID_TESTS_MOONEYE_ACCEPTANCE_BITS:
+				case ID_TESTS_MOONEYE_ACCEPTANCE_INSTR:
+				case ID_TESTS_MOONEYE_ACCEPTANCE_INTERRUPTS:
+				case ID_TESTS_MOONEYE_ACCEPTANCE_OAMDMA:
+				case ID_TESTS_MOONEYE_ACCEPTANCE_PPU:
+				case ID_TESTS_MOONEYE_ACCEPTANCE_SERIAL:
+				case ID_TESTS_MOONEYE_ACCEPTANCE_TIMER:
+				case ID_TESTS_MOONEYE_EMULATORONLY_STAR:
+				case ID_TESTS_MOONEYE_MANUAL_STAR:
 				{
+					start_tests(wmId);
+					return 0;
+				}
+				case ID_TESTS_SKIP:
+				{
+					std::wcout << std::format(L"Test {:40} : {}\n", current_rom.stem().native(), L"Skipped");
+					next_test();
 					return 0;
 				}
 				case ID_PALETTE_GREY:
@@ -444,7 +474,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT Message, WPARAM wParam, LPARAM lParam)
 					}
 				}
 			}
-			if (wParam == VK_ADD)
+			if (wParam == VK_ADD || wParam == '=')
 			{
 				speedup_active = true;
 				sync_time = std::chrono::high_resolution_clock::now();
@@ -586,7 +616,7 @@ std::optional<std::filesystem::path> show_open_dialog(HWND hwnd_owner)
 	// Get the result
 	std::unique_ptr<IShellItem, void(*)(IShellItem*)> dialog_result = { nullptr, nullptr };
 	{
-		IShellItem *psiResult;
+		IShellItem* psiResult;
 		hr = file_dialog->GetResult(&psiResult);
 		dialog_result = { psiResult, [](IShellItem* del) { del->Release(); } };
 		assert(SUCCEEDED(hr));
@@ -604,4 +634,95 @@ std::optional<std::filesystem::path> show_open_dialog(HWND hwnd_owner)
 void display_callback()
 {
 	InvalidateRect(main_window, nullptr, FALSE);
+}
+
+void start_tests(int id)
+{
+	running_test = -1;
+	tests.clear();
+	for (const auto& dir_entry : std::filesystem::directory_iterator{ test_paths[id] })
+	{
+		if (dir_entry.is_regular_file() && dir_entry.path().extension() == L".gb")
+		{
+			auto&& filename = dir_entry.path().filename();
+			constexpr std::array<std::wstring_view, 2> dmglist =
+			{
+				L"dmg", // except dmg0
+				L"G",   // dmg+mgb
+			};
+			constexpr std::array<std::wstring_view, 9> blocklist =
+			{
+				L"mgb", // Game Boy Pocket
+				L"sgb", // Super Game Boy
+				L"sgb2",// Super Game Boy 2
+				L"cgb", // Game Boy Color
+				L"agb", // Game Boy Advance
+				L"ags", // Game Boy Advance SP
+				L"S",   // sgb+sgb2
+				L"C",   // cgb+agb+ags
+				L"A",   // agb+ags
+			};
+			if (!filename.native().contains(L"dmg0") &&
+				(std::ranges::any_of(dmglist, [&](std::wstring_view s) { return filename.native().contains(s); }) ||
+				!std::ranges::any_of(blocklist, [&](std::wstring_view s) { return filename.native().contains(s); })))
+			{
+				tests.push_back(dir_entry.path());
+			}
+		}
+	}
+
+	if (tests.size() > 0)
+	{
+		std::ranges::sort(tests);
+
+		// show console
+		AllocConsole();
+		freopen("CONIN$", "r", stdin);
+		freopen("CONOUT$", "w", stdout);
+		freopen("CONOUT$", "w", stderr);
+
+		running_test = 0;
+		start_test();
+	}
+}
+
+void start_test()
+{
+	current_rom = tests[running_test];
+	std::filesystem::path default_ram = current_rom;
+	default_ram.replace_extension(".sav");
+	current_ram = default_ram;
+
+	InvalidateRect(main_window, nullptr, FALSE);
+
+	emu_instance.emplace();
+	emu_instance->set_display_callback(display_callback);
+	emu_instance->load_boot_rom(boot_rom_path);
+	cart_instance.emplace(current_rom, current_ram);
+	emu_instance->load_cart(*cart_instance);
+
+	emu_instance->start(true);
+
+	sync_time = std::chrono::high_resolution_clock::now();
+	sync_cycles = emu_instance->get_cycle_counter();
+
+	SetWindowTextW(main_window, (L"CoroGB - Tests - " + current_rom.filename().native()).c_str());
+}
+
+void next_test()
+{
+	if (running_test >= 0)
+	{
+		++running_test;
+		if (running_test < tests.size())
+		{
+			start_test();
+		}
+		else
+		{
+			running_test = -1;
+			emu_instance.reset();
+			std::println("Complete");
+		}
+	}
 }

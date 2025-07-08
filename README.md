@@ -44,14 +44,14 @@ Notes:
 | call timing2            | :+1:       | :+1:   |
 | call cc_timing          | :+1:       | :+1:   |
 | call cc_timing2         | :+1:       | :+1:   |
-| di timing GS            | :+1:       | :+1:   |
+| di timing GS            | :+1:       | :x:   |
 | div timing              | :+1:       | :+1:   |
 | ei sequence             | :+1:       | :+1:   |
 | ei timing               | :+1:       | :+1:   |
 | halt ime0 ei            | :+1:       | :+1:   |
-| halt ime0 nointr_timing | :+1:       | :+1:   |
+| halt ime0 nointr_timing | :+1:       | :x:   |
 | halt ime1 timing        | :+1:       | :x:    |
-| halt ime1 timing2 GS    | :+1:       | :+1:   |
+| halt ime1 timing2 GS    | :+1:       | :x:   |
 | if ie registers         | :+1:       | :+1:   |
 | intr timing             | :+1:       | :+1:   |
 | jp timing               | :+1:       | :+1:   |

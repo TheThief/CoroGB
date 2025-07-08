@@ -99,7 +99,7 @@ namespace coro_gb
 		return result;
 	}
 
-	single_future<void> cpu::run()
+	single_future<test_status> cpu::run()
 	{
 		bool halt_bug = false;
 		int8_t additional_cycles = 0;
@@ -636,6 +636,12 @@ namespace coro_gb
 
 					//if ((opcode & 0b11000000) == 0b01000000) // ld r8,r8
 					{
+						if (break_on_ld_b_b && (opcode & 0b111111) == 0b000000 &&
+							get_mooneye_result() != test_status::running)
+						{
+							co_return get_mooneye_result();
+						}
+
 						uint8_t value;
 
 						switch (opcode & 0b111)

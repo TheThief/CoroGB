@@ -9,6 +9,13 @@ struct single_future;
 
 namespace coro_gb
 {
+	enum test_status
+	{
+		running,
+		pass,
+		fail,
+	};
+
 	struct memory_mapper;
 
 	struct registers_t final
@@ -68,7 +75,8 @@ namespace coro_gb
 	{
 		cpu(cycle_scheduler& scheduler, memory_mapper& memory);
 
-		single_future<void> run();
+		single_future<test_status> run();
+		test_status get_mooneye_result() const;
 
 	protected:
 		registers_t registers;
@@ -76,5 +84,29 @@ namespace coro_gb
 		memory_mapper& memory;
 
 		cycle_scheduler::awaitable_cycles cycles(cycle_scheduler::priority priority, uint32_t wait);
+
+	public:
+		bool break_on_ld_b_b = false;
 	};
+
+	inline test_status cpu::get_mooneye_result() const
+	{
+		if (
+			registers.B == 3 &&
+			registers.C == 5 &&
+			registers.D == 8 &&
+			registers.E == 13 &&
+			registers.H == 21 &&
+			registers.L == 34)
+			return test_status::pass;
+		if (
+			registers.B == 0x42 &&
+			registers.C == 0x42 &&
+			registers.D == 0x42 &&
+			registers.E == 0x42 &&
+			registers.H == 0x42 &&
+			registers.L == 0x42)
+			return test_status::fail;
+		return test_status::running;
+	}
 }
