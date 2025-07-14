@@ -2,7 +2,7 @@
 
 namespace coro_gb
 {
-	void cycle_scheduler::queue(uint32_t at, unit unit, priority priority, std::function<void()> fn) noexcept
+	void cycle_scheduler::queue(uint32_t at, unit unit, priority priority, std::function<void()> fn, void* wait_obj) noexcept
 	{
 		uint16_t priority_value = ((uint16_t) priority << 8 | (uint8_t) unit);
 		if (std::make_tuple((int32_t)(at - cycle_counter), priority_value)
@@ -12,10 +12,10 @@ namespace coro_gb
 			next_priority = priority_value;
 		}
 
-		queued.push({ at, priority_value, fn });
+		queued.push({ at, priority_value, fn, wait_obj });
 	}
 
-	void cycle_scheduler::tick(uint32_t num_cycles) noexcept
+	bool cycle_scheduler::tick(uint32_t num_cycles) noexcept
 	{
 		end = cycle_counter + num_cycles;
 		while (!queued.empty() &&
@@ -34,17 +34,25 @@ namespace coro_gb
 					next_priority = queued.back().priority;
 				}
 			}
-			top.queued_function();
+			if ((top.priority & 0xFF) == (uint8_t)unit::debug)
+			{
+				return false;
+			}
+			else
+			{
+				top.queued_function();
+			}
 		}
 
 		cycle_counter = end;
+		return true;
 	}
 
 	////////////////////////////////////////////////////////////////
 
 	void cycle_scheduler::awaitable_cycles_base::await_suspend(std::coroutine_handle<> handle) noexcept
 	{
-		scheduler.queue(wait_until, unit, priority, handle);
+		scheduler.queue(wait_until, unit, priority, handle, this);
 	}
 
 	bool cycle_scheduler::awaitable_cycles_interruptible::await_resume()
@@ -52,7 +60,7 @@ namespace coro_gb
 		awaited_interrupt.set_callback(nullptr);
 
 		uint16_t priority_value = ((uint16_t)priority << 8 | (uint8_t)unit);
-		auto it = scheduler.queued.find({ wait_until, priority_value, suspended_coroutine });
+		auto it = scheduler.queued.find({ wait_until, priority_value, nullptr, this });
 		if (it != scheduler.queued.end())
 		{
 			// still in cycle queue so must be interrupt

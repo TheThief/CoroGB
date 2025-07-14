@@ -615,6 +615,8 @@ namespace coro_gb
 		else if (address == 0xFF45)
 		{
 			registers.lcd_yc = u8;
+			registers.lcd_stat.coincidence = (registers.lcd_yc == registers.lcd_y);
+			update_interrupt_flags(registers.lcd_stat.mode);
 			return;
 		}
 		else if (address == 0xFF46)
@@ -677,7 +679,7 @@ namespace coro_gb
 		}
 
 		const bool trigger_stat = !old_stat_flag && stat_flag;
-		const bool trigger_vblank = !memory.interrupt_flag.vblank && !old_vblank_flag && vblank_flag;
+		const bool trigger_vblank = !old_vblank_flag && vblank_flag;
 		if (trigger_stat)
 		{
 			memory.interrupt_flag.stat = true;
@@ -724,14 +726,14 @@ namespace coro_gb
 		}
 		update_interrupt_flags(mode);
 		scheduler.queue(scheduler.get_cycle_counter() + 4, cycle_scheduler::unit::ppu, cycle_scheduler::priority::write,
-			[this, mode]() {
+			[this, mode, y]() {
 				registers.lcd_stat.mode = mode; // truncates to 2 bits
 				if (mode == lcd_mode::h_blank || mode == lcd_mode::v_blank || mode == lcd_mode::oam_search || mode == lcd_mode::initial_power_on)
 				{
-					registers.lcd_stat.coincidence = (registers.lcd_yc == registers.lcd_y);
+					registers.lcd_stat.coincidence = (registers.lcd_yc == y);
 					update_interrupt_flags(mode);
 				}
-			});
+			}, nullptr);
 	}
 
 	single_future<void> ppu::run_dma()

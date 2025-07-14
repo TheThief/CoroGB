@@ -37,7 +37,7 @@ Notes:
 | Test                    | mooneye-gb | CoroGB |
 |-------------------------|------------|--------|
 | add sp e timing         | :+1:       | :+1:   |
-| boot div dmgABCmgb      | :x:        | :x:    |
+| boot div dmgABCmgb      | :x:        | :+1:   |
 | boot hwio dmgABCmgb     | :x:        | :x:    |
 | boot regs dmgABC        | :+1:       | :+1:   |
 | call timing             | :+1:       | :+1:   |
@@ -49,7 +49,7 @@ Notes:
 | ei sequence             | :+1:       | :+1:   |
 | ei timing               | :+1:       | :+1:   |
 | halt ime0 ei            | :+1:       | :+1:   |
-| halt ime0 nointr_timing | :+1:       | :x:   |
+| halt ime0 nointr_timing | :+1:       | :+1:   |
 | halt ime1 timing        | :+1:       | :x:    |
 | halt ime1 timing2 GS    | :+1:       | :x:   |
 | if ie registers         | :+1:       | :+1:   |
@@ -107,17 +107,17 @@ Notes:
 | Test                        | mooneye-gb | CoroGB |
 |-----------------------------|------------|--------|
 | hblank ly scx timing GS     | :+1:       | :+1:   |
-| intr 1 2 timing GS          | :+1:       | :+1:   |
+| intr 1 2 timing GS          | :+1:       | :x:   |
 | intr 2 0 timing             | :+1:       | :+1:   |
 | intr 2 mode0 timing         | :+1:       | :+1:   |
 | intr 2 mode0 timing sprites | :x:        | :x:    |
 | intr 2 mode3 timing         | :+1:       | :+1:   |
 | intr 2 oam ok timing        | :+1:       | :x:    |
-| lcdon timing dmgABCmgbS     | :x:        | :x:    |
+| lcdon timing GS             | :x:        | :x:    |
 | lcdon write timing GS       | :x:        | :x:    |
-| stat irq blocking           | :x:        | :x:    |
+| stat irq blocking           | :x:        | :+1:   |
 | stat lyc onoff              | :x:        | :x:    |
-| vblank stat intr GS         | :+1:       | :x:    |
+| vblank stat intr GS         | :+1:       | :+1:   |
 
 Notes:
 

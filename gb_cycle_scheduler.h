@@ -22,8 +22,8 @@ namespace coro_gb
 		{
 			debug,
 			dma,
-			cpu, // cpu clocks on the rising edge
-			ppu, // ppu clocks on the falling edge (inverted clock)
+			ppu,
+			cpu,
 			//serial,
 			//sound,
 		};
@@ -86,9 +86,9 @@ namespace coro_gb
 			return cycle_counter;
 		}
 
-		void queue(uint32_t at, unit unit, priority priority, std::function<void()> fn) noexcept;
+		void queue(uint32_t at, unit unit, priority priority, std::function<void()> fn, void* wait_obj) noexcept;
 
-		void tick(uint32_t num_cycles) noexcept;
+		bool tick(uint32_t num_cycles) noexcept;
 
 	private:
 		struct cycle_wait final
@@ -96,11 +96,12 @@ namespace coro_gb
 			uint32_t wait_until;
 			uint16_t priority;
 			std::function<void()> queued_function;
+			void* wait_obj;
 
 			friend bool operator==(const cycle_wait& lhs, const cycle_wait& rhs) noexcept
 			{
-				return std::make_tuple(lhs.wait_until, lhs.priority)
-					== std::make_tuple(rhs.wait_until, rhs.priority);
+				return std::tie(lhs.wait_until, lhs.priority, lhs.wait_obj)
+					== std::tie(rhs.wait_until, rhs.priority, rhs.wait_obj);
 			}
 		};
 
