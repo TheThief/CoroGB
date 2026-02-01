@@ -119,13 +119,13 @@ namespace coro_gb
 				[[unlikely]]
 				if (!registers.lcd_control.lcd_enable)
 				{
-					stat_flag = false;
+					//stat_flag = false; // interrupts can in fact be suppressed across an LCD disable
 					vblank_flag = false;
 					registers.lcd_y = 0;
 					registers.lcd_stat.mode = lcd_mode::power_off;
-					registers.lcd_stat.coincidence = false;
 					interrupts.lcd_enable.reset();
 					co_await interrupts.lcd_enable;
+					registers.lcd_stat.coincidence = (registers.lcd_yc == 0); // normally delayed by a cycle when LY changes, but updates immediately when the LCD is enabled
 					bLCDOnBug = true;
 				}
 
@@ -615,8 +615,11 @@ namespace coro_gb
 		else if (address == 0xFF45)
 		{
 			registers.lcd_yc = u8;
-			registers.lcd_stat.coincidence = (registers.lcd_yc == registers.lcd_y);
-			update_interrupt_flags(registers.lcd_stat.mode);
+			if (registers.lcd_control.lcd_enable)
+			{
+				registers.lcd_stat.coincidence = (registers.lcd_yc == registers.lcd_y);
+				update_interrupt_flags(registers.lcd_stat.mode);
+			}
 			return;
 		}
 		else if (address == 0xFF46)
@@ -651,31 +654,40 @@ namespace coro_gb
 
 	void ppu::update_interrupt_flags(lcd_mode mode)
 	{
-		bool old_stat_flag = stat_flag;
-		stat_flag = false;
+		// if stored mode is different to passed in mode then we're in the first cycle of the mode
+		bool first_cycle = mode != registers.lcd_stat.mode;
 
-		if (mode == lcd_mode::h_blank && registers.lcd_stat.hblank_ienable)
-		{
-			stat_flag = true;
-		}
-		else if (mode == lcd_mode::v_blank && (registers.lcd_stat.vblank_ienable || registers.lcd_stat.oam_ienable))
-		{
-			stat_flag = true;
-		}
-		else if (mode == lcd_mode::oam_search && registers.lcd_stat.oam_ienable)
-		{
-			stat_flag = true;
-		}
-		else if (registers.lcd_stat.coincidence && registers.lcd_stat.coincidence_ienable)
-		{
-			stat_flag = true;
-		}
+		bool old_stat_flag = std::exchange(stat_flag, false);
+		bool old_vblank_flag = std::exchange(vblank_flag, false);
 
-		bool old_vblank_flag = vblank_flag;
-		vblank_flag = false;
-		if (mode == lcd_mode::v_blank)
+		switch (mode)
 		{
+		case lcd_mode::h_blank:
+			if (registers.lcd_stat.hblank_ienable)
+				stat_flag = true;
+			break;
+		case lcd_mode::v_blank:
+			if (registers.lcd_stat.vblank_ienable && !first_cycle)
+				stat_flag = true;
+			if (registers.lcd_stat.oam_ienable && first_cycle)
+				stat_flag = true;
 			vblank_flag = true;
+			break;
+		case lcd_mode::oam_search:
+			if (registers.lcd_stat.oam_ienable)
+			{
+				if (registers.lcd_y == 0 && !first_cycle)
+					stat_flag = true;
+				if (registers.lcd_y >= 1 && registers.lcd_y <= 143)
+					stat_flag = true;
+			}
+			if (registers.lcd_y == 0 && first_cycle && registers.lcd_stat.vblank_ienable)
+				stat_flag = true;
+			break;
+		}
+		if (registers.lcd_stat.coincidence && registers.lcd_stat.coincidence_ienable)
+		{
+			stat_flag = true;
 		}
 
 		const bool trigger_stat = !old_stat_flag && stat_flag;

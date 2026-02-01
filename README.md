@@ -116,7 +116,7 @@ Notes:
 | lcdon timing GS             | :x:        | :x:    |
 | lcdon write timing GS       | :x:        | :x:    |
 | stat irq blocking           | :x:        | :+1:   |
-| stat lyc onoff              | :x:        | :x:    |
+| stat lyc onoff              | :x:        | :+1:   |
 | vblank stat intr GS         | :+1:       | :+1:   |
 
 Notes:
