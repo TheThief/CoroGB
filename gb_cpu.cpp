@@ -3,6 +3,9 @@
 #include "gb_memory_mapper.h"
 #include "single_future.h"
 
+#include <cassert>
+#include <coroutine>
+
 namespace coro_gb
 {
 	cpu::cpu(cycle_scheduler& scheduler, memory_mapper& memory)
@@ -13,60 +16,309 @@ namespace coro_gb
 
 	cycle_scheduler::awaitable_cycles cpu::cycles(cycle_scheduler::priority priority, uint32_t wait)
 	{
-		return scheduler.cycles(cycle_scheduler::unit::cpu, priority, wait);
+		return scheduler.cycles(cycle_scheduler::unit::cpu, priority, wait + std::exchange(additional_cycles, 0));
 	}
 
-	// we add any dummy/additional cycles on to the next wait for efficiency
-#define dummy_wait(wait) \
-	additional_cycles += wait;
+	std::suspend_never cpu::dummy_wait(int32_t wait)
+	{
+		additional_cycles += wait;
+		return {};
+	}
 
-#define read_wait(wait) \
-	co_await cycles(cycle_scheduler::priority::read, wait + additional_cycles); \
-	additional_cycles = 0;
+	struct cpu::awaitable_read8 final : protected cycle_scheduler::awaitable_cycles_base
+	{
+		awaitable_read8(cpu& cpu, uint16_t address, int32_t additional_cycles) noexcept
+			: awaitable_cycles_base(cpu.scheduler, cycle_scheduler::unit::cpu, cycle_scheduler::priority::read, 4 + additional_cycles)
+			, cpu(cpu)
+			, address(address)
+		{
+		}
 
-#define write_wait(wait) \
-	co_await cycles(cycle_scheduler::priority::write, wait + additional_cycles); \
-	additional_cycles = 0;
+		cpu& cpu;
+		uint16_t address;
 
-#define cpu_read8(var, cast, address) \
-	read_wait(4); \
-	var = static_cast<cast>(memory.read8(address));
+		using awaitable_cycles_base::await_ready;
+		using awaitable_cycles_base::await_suspend;
 
-#define cpu_write8(address, value) \
-	write_wait(4); \
-	memory.write8(address, value);
+		uint8_t await_resume() noexcept
+		{
+			awaitable_cycles_base::await_resume();
+			return cpu.memory.read8(address);
+		}
+	};
 
-#define cpu_read16(var, address) \
-	cpu_read8(var, uint16_t, address); \
-	co_await cycles(cycle_scheduler::priority::read, 4); \
-	var |= static_cast<uint16_t>(memory.read8(address + 1)) << 8;
+	struct cpu::awaitable_write8 final : protected cycle_scheduler::awaitable_cycles_base
+	{
+		awaitable_write8(cpu& cpu, uint16_t address, uint8_t value, int32_t additional_cycles) noexcept
+			: awaitable_cycles_base(cpu.scheduler, cycle_scheduler::unit::cpu, cycle_scheduler::priority::write, 4 + additional_cycles)
+			, cpu(cpu)
+			, address(address)
+			, value(value)
+		{
+		}
 
-#define cpu_write16(address, value) \
-	cpu_write8(address, (value) & 0xFF); \
-	co_await cycles(cycle_scheduler::priority::write, 4); \
-	memory.write8(address + 1, (value) >> 8);
+		cpu& cpu;
+		uint16_t address;
+		uint8_t value;
 
-#define cpu_read8_pc(var, cast) \
-	cpu_read8(var, cast, registers.PC); \
-	++registers.PC;
+		using awaitable_cycles_base::await_ready;
+		using awaitable_cycles_base::await_suspend;
 
-#define cpu_read16_pc(var) \
-	cpu_read16(var, registers.PC); \
-	registers.PC += 2;
+		void await_resume() noexcept
+		{
+			awaitable_cycles_base::await_resume();
+			cpu.memory.write8(address, value);
+		}
+	};
 
-#define cpu_push16(value) \
-	registers.SP--; \
-	dummy_wait(4) \
-	write_wait(4); \
-	memory.write8(registers.SP--, (value) >> 8); \
-	co_await cycles(cycle_scheduler::priority::write, 4); \
-	memory.write8(registers.SP, (value) & 0xFF);
+	struct cpu::awaitable_read16 final : protected cycle_scheduler::awaitable_cycles_base
+	{
+		awaitable_read16(cpu & cpu, uint16_t address, int32_t additional_cycles) noexcept
+			: awaitable_cycles_base(cpu.scheduler, cycle_scheduler::unit::cpu, cycle_scheduler::priority::read, 8 + additional_cycles)
+			, low_byte(cpu, address, additional_cycles)
+			, cpu(cpu)
+			, address(address)
+			, result(0)
+		{
+		}
 
-#define cpu_pop16(var) \
-	read_wait(4); \
-	var = memory.read8(registers.SP++); \
-	co_await cycles(cycle_scheduler::priority::read, 4); \
-	var |= static_cast<uint16_t>(memory.read8(registers.SP++)) << 8;
+		awaitable_read8 low_byte;
+
+		cpu & cpu;
+		uint16_t address;
+		uint16_t result;
+		bool has_read_low_byte = false;
+
+		bool await_ready() noexcept
+		{
+			// if the low byte is ready we can immediately read it
+			if (low_byte.await_ready())
+			{
+				result = low_byte.await_resume();
+				has_read_low_byte = true;
+
+				// second byte can only be ready if the first is
+				return awaitable_cycles_base::await_ready();
+			}
+			return false;
+		}
+
+		void await_suspend(std::coroutine_handle<> handle) noexcept
+		{
+			if (has_read_low_byte)
+			{
+				// if the first byte was ready then we're suspending because the 2nd isn't
+				awaitable_cycles_base::await_suspend(handle);
+			}
+			else
+			{
+				// if the first byte wasn't ready then we need to suspend on that first
+				// await_suspend is supposed to take a coroutine_handle, but we're abusing it by giving it a lambda instead so we don't have to spin up another coroutine
+				low_byte.await_suspend(
+					[this, handle]() mutable
+					{
+						result = low_byte.await_resume();
+						has_read_low_byte = true;
+
+						// now we can re-check if the 2nd byte is ready - if it is we can resume immediately, if not we need to suspend again
+						if (await_ready())
+						{
+							handle.resume();
+						}
+						else
+						{
+							awaitable_cycles_base::await_suspend(handle);
+						}
+					});
+			}
+		}
+
+		uint16_t await_resume() noexcept
+		{
+			awaitable_cycles_base::await_resume();
+
+			assert(has_read_low_byte);
+			result |= static_cast<uint16_t>(cpu.memory.read8(address + 1)) << 8;
+			return result;
+		}
+	};
+
+	struct cpu::awaitable_write16 final : protected cycle_scheduler::awaitable_cycles_base
+	{
+		awaitable_write16(cpu& cpu, uint16_t address, uint16_t value, int32_t additional_cycles) noexcept
+			: awaitable_cycles_base(cpu.scheduler, cycle_scheduler::unit::cpu, cycle_scheduler::priority::write, 8 + additional_cycles)
+			, low_byte(cpu, address, static_cast<uint8_t>(value & 0xFF), additional_cycles)
+			, cpu(cpu)
+			, address(address)
+			, value(value)
+		{
+		}
+
+		awaitable_write8 low_byte;
+
+		cpu& cpu;
+		uint16_t address;
+		uint16_t value;
+		bool has_written_low_byte = false;
+
+		bool await_ready() noexcept
+		{
+			if (low_byte.await_ready())
+			{
+				low_byte.await_resume();
+				has_written_low_byte = true;
+				return awaitable_cycles_base::await_ready();
+			}
+			return false;
+		}
+
+		void await_suspend(std::coroutine_handle<> handle) noexcept
+		{
+			if (has_written_low_byte)
+			{
+				awaitable_cycles_base::await_suspend(handle);
+			}
+			else
+			{
+				low_byte.await_suspend(
+					[this, handle]() mutable
+					{
+						low_byte.await_resume();
+						has_written_low_byte = true;
+
+						if (await_ready())
+						{
+							handle.resume();
+						}
+						else
+						{
+							awaitable_cycles_base::await_suspend(handle);
+						}
+					});
+			}
+		}
+
+		void await_resume() noexcept
+		{
+			awaitable_cycles_base::await_resume();
+			assert(has_written_low_byte);
+			cpu.memory.write8(address + 1, static_cast<uint8_t>(value >> 8));
+		}
+	};
+
+	struct cpu::awaitable_write16_reversed final : protected cycle_scheduler::awaitable_cycles_base
+	{
+		awaitable_write16_reversed(cpu& cpu, uint16_t address, uint16_t value, int32_t additional_cycles) noexcept
+			: awaitable_cycles_base(cpu.scheduler, cycle_scheduler::unit::cpu, cycle_scheduler::priority::write, 8 + additional_cycles)
+			, high_byte(cpu, address + 1, static_cast<uint8_t>(value >> 8), additional_cycles)
+			, cpu(cpu)
+			, address(address)
+			, value(value)
+		{
+		}
+
+		awaitable_write8 high_byte;
+
+		cpu& cpu;
+		uint16_t address;
+		uint16_t value;
+		bool has_written_high_byte = false;
+
+		bool await_ready() noexcept
+		{
+			if (high_byte.await_ready())
+			{
+				high_byte.await_resume();
+				has_written_high_byte = true;
+				return awaitable_cycles_base::await_ready();
+			}
+			return false;
+		}
+
+		void await_suspend(std::coroutine_handle<> handle) noexcept
+		{
+			if (has_written_high_byte)
+			{
+				awaitable_cycles_base::await_suspend(handle);
+			}
+			else
+			{
+				high_byte.await_suspend(
+					[this, handle]() mutable
+					{
+						high_byte.await_resume();
+						has_written_high_byte = true;
+
+						if (await_ready())
+						{
+							handle.resume();
+						}
+						else
+						{
+							awaitable_cycles_base::await_suspend(handle);
+						}
+					});
+			}
+		}
+
+		void await_resume() noexcept
+		{
+			awaitable_cycles_base::await_resume();
+			assert(has_written_high_byte);
+			cpu.memory.write8(address, static_cast<uint8_t>(value & 0xFF));
+		}
+	};
+
+	cpu::awaitable_read8 cpu::read8(uint16_t address)
+	{
+		return cpu::awaitable_read8(*this, address, std::exchange(additional_cycles, 0));
+	}
+
+	cpu::awaitable_write8 cpu::write8(uint16_t address, uint8_t value)
+	{
+		return cpu::awaitable_write8(*this, address, value, std::exchange(additional_cycles, 0));
+	}
+
+	cpu::awaitable_read16 cpu::read16(uint16_t address)
+	{
+		return cpu::awaitable_read16(*this, address, std::exchange(additional_cycles, 0));
+	}
+
+	cpu::awaitable_write16 cpu::write16(uint16_t address, uint16_t value)
+	{
+		return cpu::awaitable_write16(*this, address, value, std::exchange(additional_cycles, 0));
+	}
+
+	cpu::awaitable_read8 cpu::fetch8()
+	{
+		return read8(registers.PC++);
+	}
+
+	cpu::awaitable_read16 cpu::fetch16()
+	{
+		uint16_t address = registers.PC;
+		registers.PC += 2;
+		return read16(address);
+	}
+
+	cpu::awaitable_write16_reversed cpu::push16(uint16_t value)
+	{
+		// The gameboy CPU doesn't have pre-decrement, so we need an additional M cycle to decrement before the first write
+		// The write also happens in reverse order to every other 16-bit operation in the CPU
+		// M1 - no write, post-decrement SP
+		// M2 - write high byte and post-decrement SP
+		// M3 - write low byte
+		registers.SP -= 2;
+		additional_cycles += 4;
+		return cpu::awaitable_write16_reversed(*this, registers.SP, value, std::exchange(additional_cycles, 0));
+	}
+
+	cpu::awaitable_read16 cpu::pop16()
+	{
+		uint16_t address = registers.SP;
+		registers.SP += 2;
+		return read16(address);
+	}
 
 	struct alu_result
 	{
@@ -102,10 +354,10 @@ namespace coro_gb
 	single_future<test_status> cpu::run()
 	{
 		bool halt_bug = false;
-		int8_t additional_cycles = 0;
+		additional_cycles = 0;
 
 		// The CPU has one dummy M cycle on reset
-		dummy_wait(4);
+		co_await dummy_wait(4);
 
 		while (true)
 		{
@@ -121,7 +373,7 @@ namespace coro_gb
 			if (registers.enable_interrupts)
 			{
 				// interrupts are checked on the 3rd T-cycle (2) of the last M-cycle of the prior instruction
-				read_wait(2);
+				co_await cycles(cycle_scheduler::priority::read, 2);
 
 				memory_mapper::interrupt_bits_t triggered_interrupts = (memory.interrupt_flag & memory.interrupt_enable);
 				if ((triggered_interrupts.u8 & 0x1F) != 0)
@@ -129,14 +381,14 @@ namespace coro_gb
 					registers.enable_interrupts = false;
 					registers.enable_interrupts_delay = false;
 
-					dummy_wait(2); // realign to 4-cycle clock
-					dummy_wait(4); // discard pipelined opcode read
-					dummy_wait(4); // pre-decrement SP
+					co_await dummy_wait(2); // realign to 4-cycle clock
+					co_await dummy_wait(4); // discard pipelined opcode read
+					co_await dummy_wait(4); // pre-decrement SP
 					registers.SP--;
-					cpu_write8(registers.SP--, (registers.PC) >> 8);
-					read_wait(2);
+					co_await write8(registers.SP--, (registers.PC) >> 8);
+					co_await cycles(cycle_scheduler::priority::read, 2);
 					triggered_interrupts = (memory.interrupt_flag & memory.interrupt_enable); // interrupts are re-checked
-					write_wait(2);
+					co_await cycles(cycle_scheduler::priority::write, 2);
 					memory.write8(registers.SP, (registers.PC) & 0xFF);
 
 					// Bit 0: V-Blank  Interrupt Request (INT 40h)
@@ -176,13 +428,13 @@ namespace coro_gb
 					}
 
 					registers.PC = interrupt_dest;
-					dummy_wait(2); // realign to T-cycle 2 ready for CPU to read opcode
+					co_await dummy_wait(2); // realign to T-cycle 2 ready for CPU to read opcode
 				}
 			}
 			else
 			{
 				// interrupts are checked on T-cycle 2 of an instruction, but as they are disabled we'll just dummy the two cycles
-				dummy_wait(2);
+				co_await dummy_wait(2);
 				registers.enable_interrupts = registers.enable_interrupts_delay;
 			}
 
@@ -199,7 +451,7 @@ namespace coro_gb
 			}
 #endif
 
-			read_wait(2);
+			co_await cycles(cycle_scheduler::priority::read, 2);
 			const uint8_t opcode = memory.read8(registers.PC);
 			if (!halt_bug)
 			{
@@ -227,38 +479,37 @@ namespace coro_gb
 
 							if (opcode == 0b00001000) // ld (a16), sp
 							{
-								uint16_t address;
-								cpu_read16_pc(address);
-								cpu_write16(address, registers.SP);
+								const uint16_t address = co_await fetch16();
+								co_await cpu::write16(address, registers.SP);
 								continue;
 							}
 
 							if (opcode == 0b00011000) // jr
 							{
-								cpu_read8_pc(int8_t offset, int8_t);
+								const int8_t offset = (int8_t)co_await fetch8();
 								registers.PC += offset;
-								dummy_wait(4);
+								co_await dummy_wait(4);
 								continue;
 							}
 
 							if ((opcode & 0b11110111) == 0b00100000) // jr nz/z
 							{
-								cpu_read8_pc(int8_t offset, int8_t);
+								const int8_t offset = (int8_t)co_await fetch8();
 								if (registers.F.zero == ((opcode >> 3) & 0b1))
 								{
 									registers.PC += offset;
-									dummy_wait(4);
+									co_await dummy_wait(4);
 								}
 								continue;
 							}
 
 							if ((opcode & 0b11110111) == 0b00110000) // jr nc/c
 							{
-								cpu_read8_pc(int8_t offset, int8_t);
+								const int8_t offset = (int8_t)co_await fetch8();
 								if (registers.F.carry == ((opcode >> 3) & 0b1))
 								{
 									registers.PC += offset;
-									dummy_wait(4);
+									co_await dummy_wait(4);
 								}
 								continue;
 							}
@@ -267,8 +518,7 @@ namespace coro_gb
 						case 0b001:
 							if ((opcode & 0b11001111) == 0b00000001) // ld r16, m16
 							{
-								uint16_t value;
-								cpu_read16_pc(value);
+								const uint16_t value = co_await fetch16();
 
 								switch ((opcode >> 4) & 0b11)
 								{
@@ -335,7 +585,7 @@ namespace coro_gb
 										address = registers.HL--;
 										break;
 								}
-								cpu_write8(address, registers.A);
+								co_await write8(address, registers.A);
 								continue;
 							}
 
@@ -357,7 +607,7 @@ namespace coro_gb
 										address = registers.HL--;
 										break;
 								}
-								cpu_read8(registers.A, uint8_t, address);
+								registers.A = co_await read8(address);
 								continue;
 							}
 							break;
@@ -380,7 +630,7 @@ namespace coro_gb
 										++registers.SP;
 										break;
 								}
-								dummy_wait(4);
+								co_await dummy_wait(4);
 								continue;
 							}
 
@@ -401,7 +651,7 @@ namespace coro_gb
 										--registers.SP;
 										break;
 								}
-								dummy_wait(4);
+								co_await dummy_wait(4);
 								continue;
 							}
 							break;
@@ -431,9 +681,9 @@ namespace coro_gb
 										value = ++registers.L;
 										break;
 									case 6:
-										cpu_read8(value, uint8_t, registers.HL);
+										value = co_await read8(registers.HL);
 										++value;
-										cpu_write8(registers.HL, value);
+										co_await write8(registers.HL, value);
 										break;
 									case 7:
 										value = ++registers.A;
@@ -471,9 +721,9 @@ namespace coro_gb
 										value = --registers.L;
 										break;
 									case 6:
-										cpu_read8(value, uint8_t, registers.HL);
+										value = co_await read8(registers.HL);
 										--value;
-										cpu_write8(registers.HL, value);
+										co_await write8(registers.HL, value);
 										break;
 									case 7:
 										value = --registers.A;
@@ -489,7 +739,7 @@ namespace coro_gb
 						case 0b110:
 							if ((opcode & 0b11000111) == 0b00000110) // ld r8,m
 							{
-								cpu_read8_pc(const uint8_t value, uint8_t);
+								const uint8_t value = co_await fetch8();
 
 								switch ((opcode >> 3) & 0b111)
 								{
@@ -512,7 +762,7 @@ namespace coro_gb
 										registers.L = value;
 										break;
 									case 6:
-										cpu_write8(registers.HL, value);
+										co_await write8(registers.HL, value);
 										break;
 									case 7:
 										registers.A = value;
@@ -618,7 +868,7 @@ namespace coro_gb
 							// during halt interrupts are tested on cycle 0, rather than the usual cycle 2
 							// as ppu is ticked on the falling edge, an interrupt triggered by the ppu on cycle 0 doesn't show until the next M-cycle on the cpu
 							// 0->+4, 1->+3, 2->+2, 3->+1
-							dummy_wait(4 - (halt_total_cycles % 4));
+							co_await dummy_wait(4 - (halt_total_cycles % 4));
 
 							// jump to interrupt handler is handled by the interrupt handling code at the start of the loop
 							continue;
@@ -665,7 +915,7 @@ namespace coro_gb
 								value = registers.L;
 								break;
 							case 6:
-								cpu_read8(value, uint8_t, registers.HL);
+								value = co_await read8(registers.HL);
 								break;
 							case 7:
 								value = registers.A;
@@ -693,7 +943,7 @@ namespace coro_gb
 								registers.L = value;
 								break;
 							case 6:
-								cpu_write8(registers.HL, value);
+								co_await write8(registers.HL, value);
 								break;
 							case 7:
 								registers.A = value;
@@ -727,7 +977,7 @@ namespace coro_gb
 							value = registers.L;
 							break;
 						case 6:
-							cpu_read8(value, uint8_t, registers.HL);
+							value = co_await read8(registers.HL);
 							break;
 						case 7:
 							value = registers.A;
@@ -807,11 +1057,11 @@ namespace coro_gb
 							if ((opcode & 0b11110111) == 0b11000000) // ret nz/z
 							{
 								// conditional ret has an extra machine cycle delay while it checks the condition
-								dummy_wait(4);
+								co_await dummy_wait(4);
 								if (registers.F.zero == ((opcode >> 3) & 0b1))
 								{
-									cpu_pop16(registers.PC);
-									dummy_wait(4);
+									registers.PC = co_await pop16();
+									co_await dummy_wait(4);
 								}
 								continue;
 							}
@@ -819,53 +1069,52 @@ namespace coro_gb
 							if ((opcode & 0b11110111) == 0b11010000) // ret nc/c
 							{
 								// conditional ret has an extra machine cycle delay while it checks the condition
-								dummy_wait(4);
+								co_await dummy_wait(4);
 								if (registers.F.carry == ((opcode >> 3) & 0b1))
 								{
-									cpu_pop16(registers.PC);
-									dummy_wait(4);
+									registers.PC = co_await pop16();
+									co_await dummy_wait(4);
 								}
 								continue;
 							}
 
 							if (opcode == 0b11100000) // ld (0xFF00 + a8), a
 							{
-								cpu_read8_pc(uint8_t offset, uint8_t);
-								cpu_write8(0xFF00 + offset, registers.A);
+								const uint8_t offset = co_await fetch8();
+								co_await write8(0xFF00 + offset, registers.A);
 								continue;
 							}
 
 							if (opcode == 0b11110000) // ld a, (0xFF00 + a8)
 							{
-								cpu_read8_pc(uint8_t offset, uint8_t);
-								cpu_read8(registers.A, uint8_t, 0xFF00 + offset);
+								const uint8_t offset = co_await fetch8();
+								registers.A = co_await read8(0xFF00 + offset);
 								continue;
 							}
 
 							if (opcode == 0b11101000) // add SP, m8
 							{
-								cpu_read8_pc(const int8_t value, int8_t);
+								const int8_t value = (int8_t)co_await fetch8();
 								const uint16_t original = registers.SP;
 								registers.SP = original + value;
 								registers.F.carry = ((original & 0xFF) + (value & 0xFF)) > 0xFF;
 								registers.F.half_carry = ((original & 0x0F) + (value & 0x0F)) > 0x0F;
 								registers.F.subtract = 0;
 								registers.F.zero = 0;
-								dummy_wait(8);
+								co_await dummy_wait(8);
 								continue;
 							}
 
 							if (opcode == 0b11111000) // ld HL, SP+m8
 							{
-								cpu_read8_pc(const int8_t value, int8_t);
+								const int8_t value = (int8_t)co_await fetch8();
 								const uint16_t original = registers.SP;
-								const uint32_t result32 = (uint32_t)original + value;
-								registers.HL = (uint16_t)result32;
+								registers.HL = original + value;
 								registers.F.carry = ((original & 0xFF) + (value & 0xFF)) > 0xFF;
 								registers.F.half_carry = ((original & 0x0F) + (value & 0x0F)) > 0x0F;
 								registers.F.subtract = 0;
 								registers.F.zero = 0;
-								dummy_wait(4);
+								co_await dummy_wait(4);
 								continue;
 							}
 							break;
@@ -873,8 +1122,7 @@ namespace coro_gb
 						case 0b001:
 							if ((opcode & 0b11001111) == 0b11000001) // pop
 							{
-								uint16_t value;
-								cpu_pop16(value);
+								const uint16_t value = co_await pop16();
 								switch ((opcode >> 4) & 0b11)
 								{
 									case 0:
@@ -896,17 +1144,17 @@ namespace coro_gb
 
 							if (opcode == 0b11001001) // ret
 							{
-								cpu_pop16(registers.PC);
-								dummy_wait(4);
+								registers.PC = co_await pop16();
+								co_await dummy_wait(4);
 								continue;
 							}
 
 							if (opcode == 0b11011001) // reti
 							{
-								cpu_pop16(registers.PC);
+								registers.PC = co_await pop16();
 								registers.enable_interrupts = true;
 								registers.enable_interrupts_delay = true;
-								dummy_wait(4);
+								co_await dummy_wait(4);
 								continue;
 							}
 
@@ -926,53 +1174,49 @@ namespace coro_gb
 						case 0b010:
 							if ((opcode & 0b11110111) == 0b11000010) // jp nz/z
 							{
-								uint16_t dest;
-								cpu_read16_pc(dest);
+								const uint16_t dest = co_await fetch16();
 								if (registers.F.zero == ((opcode >> 3) & 0b1))
 								{
 									registers.PC = dest;
-									dummy_wait(4);
+									co_await dummy_wait(4);
 								}
 								continue;
 							}
 
 							if ((opcode & 0b11110111) == 0b11010010) // jp nc/c
 							{
-								uint16_t dest;
-								cpu_read16_pc(dest);
+								const uint16_t dest = co_await fetch16();
 								if (registers.F.carry == ((opcode >> 3) & 0b1))
 								{
 									registers.PC = dest;
-									dummy_wait(4);
+									co_await dummy_wait(4);
 								}
 								continue;
 							}
 
 							if (opcode == 0b11100010) // ld (0xFF00 + C), A
 							{
-								cpu_write8(0xFF00 + registers.C, registers.A);
+								co_await write8(0xFF00 + registers.C, registers.A);
 								continue;
 							}
 
 							if (opcode == 0b11110010) // ld A, (0xFF00 + C)
 							{
-								cpu_read8(registers.A, uint8_t, 0xFF00 + registers.C);
+								registers.A = co_await read8(0xFF00 + registers.C);
 								continue;
 							}
 
 							if (opcode == 0b11101010) // ld (a16), A
 							{
-								uint16_t address;
-								cpu_read16_pc(address);
-								cpu_write8(address, registers.A);
+								const uint16_t address = co_await fetch16();
+								co_await write8(address, registers.A);
 								continue;
 							}
 
 							if (opcode == 0b11111010) // ld A, (a16)
 							{
-								uint16_t address;
-								cpu_read16_pc(address);
-								cpu_read8(registers.A, uint8_t, address);
+								const uint16_t address = co_await fetch16();
+								registers.A = co_await read8(address);
 								continue;
 							}
 							break;
@@ -980,10 +1224,9 @@ namespace coro_gb
 						case 0b011:
 							if (opcode == 0b11000011) // jp
 							{
-								uint16_t dest;
-								cpu_read16_pc(dest);
+								const uint16_t dest = co_await fetch16();
 								registers.PC = dest;
-								dummy_wait(4);
+								co_await dummy_wait(4);
 								continue;
 							}
 
@@ -1005,11 +1248,10 @@ namespace coro_gb
 						case 0b100:
 							if ((opcode & 0b11110111) == 0b11000100) // call nz/z
 							{
-								uint16_t dest;
-								cpu_read16_pc(dest);
+								const uint16_t dest = co_await fetch16();
 								if (registers.F.zero == ((opcode >> 3) & 0b1))
 								{
-									cpu_push16(registers.PC);
+									co_await cpu::push16(registers.PC);
 									registers.PC = dest;
 								}
 								continue;
@@ -1017,11 +1259,10 @@ namespace coro_gb
 
 							if ((opcode & 0b11110111) == 0b11010100) // call nc/c
 							{
-								uint16_t dest;
-								cpu_read16_pc(dest);
+								const uint16_t dest = co_await fetch16();
 								if (registers.F.carry == ((opcode >> 3) & 0b1))
 								{
-									cpu_push16(registers.PC);
+									co_await cpu::push16(registers.PC);
 									registers.PC = dest;
 								}
 								continue;
@@ -1047,15 +1288,14 @@ namespace coro_gb
 										value = registers.AF;
 										break;
 								}
-								cpu_push16(value);
+								co_await cpu::push16(value);
 								continue;
 							}
 
 							if (opcode == 0b11001101) // call a16
 							{
-								uint16_t dest;
-								cpu_read16_pc(dest);
-								cpu_push16(registers.PC);
+								const uint16_t dest = co_await fetch16();
+								co_await cpu::push16(registers.PC);
 								registers.PC = dest;
 								continue;
 							}
@@ -1063,8 +1303,7 @@ namespace coro_gb
 
 						case 0b110:
 						{
-							cpu_read8_pc(uint8_t value, uint8_t);
-
+							const uint8_t value = co_await fetch8();
 							switch ((opcode >> 3) & 0b111)
 							{
 								case 0b001: // adc a,d8
@@ -1134,7 +1373,7 @@ namespace coro_gb
 						case 0b111: // rst
 						{
 							uint16_t dest = (opcode & 0b00111000);
-							cpu_push16(registers.PC);
+							co_await cpu::push16(registers.PC);
 							registers.PC = dest;
 							continue;
 						}
@@ -1144,8 +1383,7 @@ namespace coro_gb
 
 			if (opcode == 0b11001011) // bit
 			{
-				cpu_read8_pc(const uint8_t bitop, uint8_t);
-
+				const uint8_t bitop = co_await fetch8();
 				switch (bitop >> 6)
 				{
 					case 0b00: // rotates/shifts
@@ -1173,7 +1411,7 @@ namespace coro_gb
 								value = registers.L;
 								break;
 							case 6:
-								cpu_read8(value, uint8_t, registers.HL);
+								value = co_await read8(registers.HL);
 								break;
 							case 7:
 								value = registers.A;
@@ -1247,7 +1485,7 @@ namespace coro_gb
 								registers.L = value;
 								break;
 							case 6:
-								cpu_write8(registers.HL, value);
+								co_await write8(registers.HL, value);
 								break;
 							case 7:
 								registers.A = value;
@@ -1281,7 +1519,7 @@ namespace coro_gb
 								break;
 							case 6:
 							{
-								cpu_read8(const uint8_t comparand, uint8_t, registers.HL);
+								const uint8_t comparand = co_await read8(registers.HL);
 								registers.F.zero = !(comparand & value);
 								break;
 							}
@@ -1319,8 +1557,8 @@ namespace coro_gb
 								break;
 							case 6:
 							{
-								cpu_read8(const uint8_t original, uint8_t, registers.HL);
-								cpu_write8(registers.HL, original & ~value);
+								const uint8_t original = co_await read8(registers.HL);
+								co_await write8(registers.HL, original & ~value);
 								break;
 							}
 							case 7:
@@ -1355,8 +1593,8 @@ namespace coro_gb
 								break;
 							case 6:
 							{
-								cpu_read8(const uint8_t original, uint8_t, registers.HL);
-								cpu_write8(registers.HL, original | value);
+								const uint8_t original = co_await read8(registers.HL);
+								co_await write8(registers.HL, original | value);
 								break;
 							}
 							case 7:

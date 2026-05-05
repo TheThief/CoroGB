@@ -20,9 +20,9 @@ namespace coro_gb
 		void await_resume() noexcept
 		{
 		}
-		void await_suspend(std::coroutine_handle<> handle) noexcept
+		void await_suspend(std::function<void()> handle) noexcept
 		{
-			bound_function = handle;
+			bound_function = std::move(handle);
 		}
 		void trigger() noexcept
 		{

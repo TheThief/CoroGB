@@ -82,8 +82,30 @@ namespace coro_gb
 		registers_t registers;
 		cycle_scheduler& scheduler;
 		memory_mapper& memory;
+		int32_t additional_cycles = 0;
 
 		cycle_scheduler::awaitable_cycles cycles(cycle_scheduler::priority priority, uint32_t wait);
+
+		// doesn't actually suspend the CPU core - just accumulates cycles that are rolled into the next real wait
+		std::suspend_never dummy_wait(int32_t wait);
+
+		struct awaitable_read8;
+		struct awaitable_write8;
+		struct awaitable_read16;
+		struct awaitable_write16;
+		struct awaitable_write16_reversed;
+
+		awaitable_read8 read8(uint16_t address);
+		awaitable_write8 write8(uint16_t address, uint8_t value);
+
+		awaitable_read16 read16(uint16_t address);
+		awaitable_write16 write16(uint16_t address, uint16_t value);
+
+		awaitable_read8 fetch8();
+		awaitable_read16 fetch16();
+
+		awaitable_write16_reversed push16(uint16_t value);
+		awaitable_read16 pop16();
 
 	public:
 		bool break_on_ld_b_b = false;

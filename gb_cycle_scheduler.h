@@ -40,7 +40,7 @@ namespace coro_gb
 
 			bool await_ready() noexcept;
 			void await_resume() noexcept;
-			void await_suspend(std::coroutine_handle<> handle) noexcept;
+			void await_suspend(std::move_only_function<void()> continuation) noexcept;
 
 		protected:
 			cycle_scheduler& scheduler;
@@ -69,11 +69,10 @@ namespace coro_gb
 
 			bool await_ready() noexcept;
 			bool await_resume(); // returns true if interrupted
-			void await_suspend(std::coroutine_handle<> handle) noexcept;
+			void await_suspend(std::function<void()> continuation) noexcept;
 
 		protected:
 			interrupt& awaited_interrupt;
-			std::coroutine_handle<> suspended_coroutine;
 		};
 
 		awaitable_cycles_interruptible interruptible_cycles(interrupt& interrupt, unit unit, priority priority, uint32_t wait) noexcept
@@ -86,7 +85,7 @@ namespace coro_gb
 			return cycle_counter;
 		}
 
-		void queue(uint32_t at, unit unit, priority priority, std::function<void()> fn, void* wait_obj) noexcept;
+		void queue(uint32_t at, unit unit, priority priority, std::move_only_function<void()> fn, void* wait_obj) noexcept;
 
 		bool tick(uint32_t num_cycles) noexcept;
 
@@ -95,7 +94,7 @@ namespace coro_gb
 		{
 			uint32_t wait_until;
 			uint16_t priority;
-			std::function<void()> queued_function;
+			std::move_only_function<void()> queued_function;
 			void* wait_obj;
 
 			friend bool operator==(const cycle_wait& lhs, const cycle_wait& rhs) noexcept
@@ -181,10 +180,9 @@ namespace coro_gb
 		return awaitable_cycles_base::await_ready() || awaited_interrupt.await_ready();
 	}
 
-	inline void cycle_scheduler::awaitable_cycles_interruptible::await_suspend(std::coroutine_handle<> handle) noexcept
+	inline void cycle_scheduler::awaitable_cycles_interruptible::await_suspend(std::function<void()> continuation) noexcept
 	{
-		awaitable_cycles_base::await_suspend(handle);
-		awaited_interrupt.await_suspend(handle);
-		suspended_coroutine = handle;
+		awaitable_cycles_base::await_suspend(continuation);
+		awaited_interrupt.await_suspend(continuation);
 	}
 }
