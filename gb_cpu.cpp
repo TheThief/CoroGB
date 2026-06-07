@@ -25,247 +25,172 @@ namespace coro_gb
 		return {};
 	}
 
-	struct cpu::awaitable_read8 final : protected cycle_scheduler::awaitable_cycles_base
+	struct cpu::awaitable_cpu_op : protected cycle_scheduler::awaitable_cycles_base
 	{
-		awaitable_read8(cpu& cpu, uint16_t address, int32_t additional_cycles) noexcept
-			: awaitable_cycles_base(cpu.scheduler, cycle_scheduler::unit::cpu, cycle_scheduler::priority::read, 4 + additional_cycles)
-			, cpu(cpu)
-			, address(address)
+	protected:
+		awaitable_cpu_op(cpu& in_cpu, cycle_scheduler::unit unit, cycle_scheduler::priority priority, uint32_t cycles) noexcept
+			: awaitable_cycles_base(in_cpu.scheduler, unit, priority, cycles)
+			, _cpu(in_cpu)
 		{
 		}
 
-		cpu& cpu;
-		uint16_t address;
-
-		using awaitable_cycles_base::await_ready;
-		using awaitable_cycles_base::await_suspend;
-
-		uint8_t await_resume() noexcept
-		{
-			awaitable_cycles_base::await_resume();
-			return cpu.memory.read8(address);
-		}
+		cpu& _cpu;
 	};
 
-	struct cpu::awaitable_write8 final : protected cycle_scheduler::awaitable_cycles_base
+	// Template base class for 16-bit awaitable operations using CRTP
+	// FirstByteResultType: the return type of first_byte.await_resume() (uint8_t for reads, void for writes)
+	// If void, std::monostate is used as a placeholder in the optional as optional<void> isn't valid
+	template<typename Derived, typename FirstByteResultType>
+	struct cpu::awaitable_16bit_base : awaitable_cpu_op
 	{
-		awaitable_write8(cpu& cpu, uint16_t address, uint8_t value, int32_t additional_cycles) noexcept
-			: awaitable_cycles_base(cpu.scheduler, cycle_scheduler::unit::cpu, cycle_scheduler::priority::write, 4 + additional_cycles)
-			, cpu(cpu)
-			, address(address)
-			, value(value)
+	protected:
+		using result_type = std::conditional_t<std::is_void_v<FirstByteResultType>, std::monostate, FirstByteResultType>;
+		std::optional<result_type> completed_first;
+
+		awaitable_16bit_base(cpu& in_cpu, cycle_scheduler::unit unit, cycle_scheduler::priority priority, uint32_t cycles) noexcept
+			: awaitable_cpu_op(in_cpu, unit, priority, cycles)
 		{
 		}
 
-		cpu& cpu;
-		uint16_t address;
-		uint8_t value;
-
-		using awaitable_cycles_base::await_ready;
-		using awaitable_cycles_base::await_suspend;
-
-		void await_resume() noexcept
-		{
-			awaitable_cycles_base::await_resume();
-			cpu.memory.write8(address, value);
-		}
-	};
-
-	struct cpu::awaitable_read16 final : protected cycle_scheduler::awaitable_cycles_base
-	{
-		awaitable_read16(cpu & cpu, uint16_t address, int32_t additional_cycles) noexcept
-			: awaitable_cycles_base(cpu.scheduler, cycle_scheduler::unit::cpu, cycle_scheduler::priority::read, 8 + additional_cycles)
-			, low_byte(cpu, address, additional_cycles)
-			, cpu(cpu)
-			, address(address)
-			, result(0)
-		{
-		}
-
-		awaitable_read8 low_byte;
-
-		cpu & cpu;
-		uint16_t address;
-		uint16_t result;
-		bool has_read_low_byte = false;
-
+	public:
 		bool await_ready() noexcept
 		{
-			// if the low byte is ready we can immediately read it
-			if (low_byte.await_ready())
+			Derived* self = static_cast<Derived*>(this);
+			if (self->first_byte.await_ready())
 			{
-				result = low_byte.await_resume();
-				has_read_low_byte = true;
-
-				// second byte can only be ready if the first is
-				return awaitable_cycles_base::await_ready();
+				if constexpr (std::is_void_v<FirstByteResultType>) {
+					self->first_byte.await_resume();
+					self->completed_first = std::monostate{};
+				} else {
+					self->completed_first = self->first_byte.await_resume();
+				}
+				return self->awaitable_cpu_op::await_ready();
 			}
 			return false;
 		}
 
 		void await_suspend(std::coroutine_handle<> handle) noexcept
 		{
-			if (has_read_low_byte)
+			Derived* self = static_cast<Derived*>(this);
+			if (self->completed_first.has_value())
 			{
-				// if the first byte was ready then we're suspending because the 2nd isn't
-				awaitable_cycles_base::await_suspend(handle);
+				awaitable_cpu_op::await_suspend(handle);
 			}
 			else
 			{
-				// if the first byte wasn't ready then we need to suspend on that first
-				// await_suspend is supposed to take a coroutine_handle, but we're abusing it by giving it a lambda instead so we don't have to spin up another coroutine
-				low_byte.await_suspend(
-					[this, handle]() mutable
+				self->first_byte.await_suspend(
+					[self, handle]() mutable
 					{
-						result = low_byte.await_resume();
-						has_read_low_byte = true;
+						if constexpr (std::is_void_v<FirstByteResultType>) {
+							self->first_byte.await_resume();
+							self->completed_first = std::monostate{};
+						} else {
+							self->completed_first = self->first_byte.await_resume();
+						}
 
-						// now we can re-check if the 2nd byte is ready - if it is we can resume immediately, if not we need to suspend again
-						if (await_ready())
+						if (self->await_ready())
 						{
 							handle.resume();
 						}
 						else
 						{
-							awaitable_cycles_base::await_suspend(handle);
+							self->awaitable_cpu_op::await_suspend(handle);
 						}
 					});
 			}
 		}
+	};
+
+	struct cpu::awaitable_read8 final : awaitable_cpu_op
+	{
+		awaitable_read8(cpu& in_cpu, uint16_t address, int32_t additional_cycles) noexcept
+			: awaitable_cpu_op(in_cpu, cycle_scheduler::unit::cpu, cycle_scheduler::priority::read, 4 + additional_cycles)
+			, address(address)
+		{
+		}
+
+		uint16_t address;
+
+		using awaitable_cpu_op::await_ready;
+		using awaitable_cpu_op::await_suspend;
+
+		uint8_t await_resume() noexcept
+		{
+			awaitable_cpu_op::await_resume();
+			return _cpu.memory.read8(address);
+		}
+	};
+
+	struct cpu::awaitable_write8 final : awaitable_cpu_op
+	{
+		awaitable_write8(cpu& in_cpu, uint16_t address, uint8_t value, int32_t additional_cycles) noexcept
+			: awaitable_cpu_op(in_cpu, cycle_scheduler::unit::cpu, cycle_scheduler::priority::write, 4 + additional_cycles)
+			, address(address)
+			, value(value)
+		{
+		}
+
+		uint16_t address;
+		uint8_t value;
+
+		using awaitable_cpu_op::await_ready;
+		using awaitable_cpu_op::await_suspend;
+
+		void await_resume() noexcept
+		{
+			awaitable_cpu_op::await_resume();
+			_cpu.memory.write8(address, value);
+		}
+	};
+
+	struct cpu::awaitable_read16 final : awaitable_16bit_base<awaitable_read16, uint8_t>
+	{
+		awaitable_read16(cpu& in_cpu, uint16_t address, int32_t additional_cycles) noexcept
+			: awaitable_16bit_base(in_cpu, cycle_scheduler::unit::cpu, cycle_scheduler::priority::read, 8 + additional_cycles)
+			, first_byte(in_cpu, address, additional_cycles)
+			, second_address(address + 1)
+		{
+		}
+
+		awaitable_read8 first_byte;
+		uint16_t second_address;
+
+		using awaitable_16bit_base::await_ready;
+		using awaitable_16bit_base::await_suspend;
 
 		uint16_t await_resume() noexcept
 		{
-			awaitable_cycles_base::await_resume();
+			awaitable_cpu_op::await_resume();
 
-			assert(has_read_low_byte);
-			result |= static_cast<uint16_t>(cpu.memory.read8(address + 1)) << 8;
+			assert(completed_first.has_value());
+			uint16_t result = completed_first.value();
+			result |= _cpu.memory.read8(second_address) << 8;
 			return result;
 		}
 	};
 
-	struct cpu::awaitable_write16 final : protected cycle_scheduler::awaitable_cycles_base
+	struct cpu::awaitable_write16 final : awaitable_16bit_base<awaitable_write16, void>
 	{
-		awaitable_write16(cpu& cpu, uint16_t address, uint16_t value, int32_t additional_cycles) noexcept
-			: awaitable_cycles_base(cpu.scheduler, cycle_scheduler::unit::cpu, cycle_scheduler::priority::write, 8 + additional_cycles)
-			, low_byte(cpu, address, static_cast<uint8_t>(value & 0xFF), additional_cycles)
-			, cpu(cpu)
-			, address(address)
-			, value(value)
+		awaitable_write16(cpu& in_cpu, uint16_t first_address, uint8_t first_value, uint16_t second_address, uint8_t second_value, int32_t additional_cycles) noexcept
+			: awaitable_16bit_base(in_cpu, cycle_scheduler::unit::cpu, cycle_scheduler::priority::write, 8 + additional_cycles)
+			, first_byte(in_cpu, first_address, first_value, additional_cycles)
+			, second_address(second_address)
+			, second_value(second_value)
 		{
 		}
 
-		awaitable_write8 low_byte;
+		awaitable_write8 first_byte;
+		uint16_t second_address;
+		uint8_t second_value;
 
-		cpu& cpu;
-		uint16_t address;
-		uint16_t value;
-		bool has_written_low_byte = false;
-
-		bool await_ready() noexcept
-		{
-			if (low_byte.await_ready())
-			{
-				low_byte.await_resume();
-				has_written_low_byte = true;
-				return awaitable_cycles_base::await_ready();
-			}
-			return false;
-		}
-
-		void await_suspend(std::coroutine_handle<> handle) noexcept
-		{
-			if (has_written_low_byte)
-			{
-				awaitable_cycles_base::await_suspend(handle);
-			}
-			else
-			{
-				low_byte.await_suspend(
-					[this, handle]() mutable
-					{
-						low_byte.await_resume();
-						has_written_low_byte = true;
-
-						if (await_ready())
-						{
-							handle.resume();
-						}
-						else
-						{
-							awaitable_cycles_base::await_suspend(handle);
-						}
-					});
-			}
-		}
+		using awaitable_16bit_base::await_ready;
+		using awaitable_16bit_base::await_suspend;
 
 		void await_resume() noexcept
 		{
-			awaitable_cycles_base::await_resume();
-			assert(has_written_low_byte);
-			cpu.memory.write8(address + 1, static_cast<uint8_t>(value >> 8));
-		}
-	};
-
-	struct cpu::awaitable_write16_reversed final : protected cycle_scheduler::awaitable_cycles_base
-	{
-		awaitable_write16_reversed(cpu& cpu, uint16_t address, uint16_t value, int32_t additional_cycles) noexcept
-			: awaitable_cycles_base(cpu.scheduler, cycle_scheduler::unit::cpu, cycle_scheduler::priority::write, 8 + additional_cycles)
-			, high_byte(cpu, address + 1, static_cast<uint8_t>(value >> 8), additional_cycles)
-			, cpu(cpu)
-			, address(address)
-			, value(value)
-		{
-		}
-
-		awaitable_write8 high_byte;
-
-		cpu& cpu;
-		uint16_t address;
-		uint16_t value;
-		bool has_written_high_byte = false;
-
-		bool await_ready() noexcept
-		{
-			if (high_byte.await_ready())
-			{
-				high_byte.await_resume();
-				has_written_high_byte = true;
-				return awaitable_cycles_base::await_ready();
-			}
-			return false;
-		}
-
-		void await_suspend(std::coroutine_handle<> handle) noexcept
-		{
-			if (has_written_high_byte)
-			{
-				awaitable_cycles_base::await_suspend(handle);
-			}
-			else
-			{
-				high_byte.await_suspend(
-					[this, handle]() mutable
-					{
-						high_byte.await_resume();
-						has_written_high_byte = true;
-
-						if (await_ready())
-						{
-							handle.resume();
-						}
-						else
-						{
-							awaitable_cycles_base::await_suspend(handle);
-						}
-					});
-			}
-		}
-
-		void await_resume() noexcept
-		{
-			awaitable_cycles_base::await_resume();
-			assert(has_written_high_byte);
-			cpu.memory.write8(address, static_cast<uint8_t>(value & 0xFF));
+			awaitable_cpu_op::await_resume();
+			assert(completed_first.has_value());
+			_cpu.memory.write8(second_address, second_value);
 		}
 	};
 
@@ -286,7 +211,14 @@ namespace coro_gb
 
 	cpu::awaitable_write16 cpu::write16(uint16_t address, uint16_t value)
 	{
-		return cpu::awaitable_write16(*this, address, value, std::exchange(additional_cycles, 0));
+		// Write low byte first, then high byte
+		return cpu::awaitable_write16(
+			*this,
+			address,
+			static_cast<uint8_t>(value & 0xFF),
+			address + 1,
+			static_cast<uint8_t>(value >> 8),
+			std::exchange(additional_cycles, 0));
 	}
 
 	cpu::awaitable_read8 cpu::fetch8()
@@ -301,7 +233,7 @@ namespace coro_gb
 		return read16(address);
 	}
 
-	cpu::awaitable_write16_reversed cpu::push16(uint16_t value)
+	cpu::awaitable_write16 cpu::push16(uint16_t value)
 	{
 		// The gameboy CPU doesn't have pre-decrement, so we need an additional M cycle to decrement before the first write
 		// The write also happens in reverse order to every other 16-bit operation in the CPU
@@ -310,7 +242,15 @@ namespace coro_gb
 		// M3 - write low byte
 		registers.SP -= 2;
 		additional_cycles += 4;
-		return cpu::awaitable_write16_reversed(*this, registers.SP, value, std::exchange(additional_cycles, 0));
+
+		// Write high byte first, then low byte
+		return cpu::awaitable_write16(
+			*this,
+			registers.SP + 1,
+			static_cast<uint8_t>(value >> 8),
+			registers.SP,
+			static_cast<uint8_t>(value & 0xFF),
+			std::exchange(additional_cycles, 0));
 	}
 
 	cpu::awaitable_read16 cpu::pop16()

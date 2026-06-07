@@ -89,11 +89,16 @@ namespace coro_gb
 		// doesn't actually suspend the CPU core - just accumulates cycles that are rolled into the next real wait
 		std::suspend_never dummy_wait(int32_t wait);
 
+		// Base class for all CPU awaitable operations
+		struct awaitable_cpu_op;
+
+		template<typename Derived, typename FirstByteResultType>
+		struct awaitable_16bit_base;
+
 		struct awaitable_read8;
 		struct awaitable_write8;
 		struct awaitable_read16;
 		struct awaitable_write16;
-		struct awaitable_write16_reversed;
 
 		awaitable_read8 read8(uint16_t address);
 		awaitable_write8 write8(uint16_t address, uint8_t value);
@@ -104,7 +109,7 @@ namespace coro_gb
 		awaitable_read8 fetch8();
 		awaitable_read16 fetch16();
 
-		awaitable_write16_reversed push16(uint16_t value);
+		awaitable_write16 push16(uint16_t value);
 		awaitable_read16 pop16();
 
 	public:
