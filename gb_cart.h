@@ -1,6 +1,6 @@
 #pragma once
 
-#include "gb_memory_mapper.h"
+#include "gb_memory_map.h"
 
 #include <vector>
 #include <filesystem>
@@ -13,7 +13,7 @@ namespace coro_gb
 	{
 		cart(std::filesystem::path rom_path, std::filesystem::path ram_path);
 
-		void map(memory_mapper& in_memory_mapper);
+		void map(memory_map& in_memory_map);
 		void unmap();
 
 	protected:
@@ -28,7 +28,7 @@ namespace coro_gb
 			mbc_base(std::vector<uint8_t> in_rom, uint32_t in_override_ram_size = -1);
 			virtual ~mbc_base() = 0;
 
-			virtual void map_to(memory_mapper& in_memory_mapper) = 0;
+			virtual void map_to(memory_map& in_memory_map) = 0;
 			void unmap();
 
 			// load/save ram data
@@ -40,7 +40,7 @@ namespace coro_gb
 			std::vector<uint8_t> rom;
 			std::vector<uint8_t> ram;
 			std::filesystem::path ram_path = "";
-			memory_mapper* mapped_to = nullptr;
+			memory_map* mapped_to = nullptr;
 
 			void map_ram(uint8_t ram_bank);
 			void unmap_ram();
@@ -53,7 +53,7 @@ namespace coro_gb
 		{
 			null_mbc(std::vector<uint8_t> in_rom);
 
-			virtual void map_to(memory_mapper& in_memory_mapper) override;
+			virtual void map_to(memory_map& in_memory_map) override;
 		};
 		struct mbc1 final : public mbc_base
 		{
@@ -98,7 +98,7 @@ namespace coro_gb
 
 			mbc1(std::vector<uint8_t> in_rom);
 
-			virtual void map_to(memory_mapper& in_memory_mapper) override;
+			virtual void map_to(memory_map& in_memory_map) override;
 
 			void handle_write(uint16_t address, uint8_t value);
 		};
@@ -109,7 +109,7 @@ namespace coro_gb
 
 			mbc2(std::vector<uint8_t> in_rom);
 
-			virtual void map_to(memory_mapper& in_memory_mapper) override;
+			virtual void map_to(memory_map& in_memory_map) override;
 
 			void handle_write(uint16_t address, uint8_t value);
 
@@ -127,7 +127,7 @@ namespace coro_gb
 
 			mbc3(std::vector<uint8_t> in_rom);
 
-			virtual void map_to(memory_mapper& in_memory_mapper) override;
+			virtual void map_to(memory_map& in_memory_map) override;
 
 			virtual void load_ram(std::istream& f) override;
 			virtual void save_ram(std::ostream& f) override;
@@ -142,7 +142,7 @@ namespace coro_gb
 
 			mbc5(std::vector<uint8_t> in_rom);
 
-			virtual void map_to(memory_mapper& in_memory_mapper) override;
+			virtual void map_to(memory_map& in_memory_map) override;
 
 			void handle_write(uint16_t address, uint8_t value);
 		};
@@ -222,7 +222,7 @@ namespace coro_gb
 
 			mmm01(std::vector<uint8_t> in_rom);
 
-			virtual void map_to(memory_mapper& in_memory_mapper) override;
+			virtual void map_to(memory_map& in_memory_map) override;
 
 			void handle_write(uint16_t address, uint8_t value);
 		};

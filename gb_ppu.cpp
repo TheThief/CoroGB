@@ -2,7 +2,7 @@
 
 #include "gb_ppu.h"
 #include "gb_cycle_scheduler.h"
-#include "gb_memory_mapper.h"
+#include "gb_memory_map.h"
 #include "single_future.h"
 
 #include <algorithm>
@@ -11,18 +11,18 @@
 
 namespace coro_gb
 {
-	ppu::ppu(cycle_scheduler& scheduler, memory_mapper& memory)
+	ppu::ppu(cycle_scheduler& scheduler, memory_map& memory)
 		: scheduler{ scheduler }
 		, memory{ memory }
 	{
 		// vram
-		memory.set_mapping({ 0x8000, 0x9FFF, vram.data(), vram.data() });
+		memory.set_mapping(memory_region::vram, { 0x1FFF, vram.data(), vram.data() });
 
 		//oam
-		memory.set_mapping({ 0xFE00, 0xFEA0, (uint8_t*)oam.data(), (uint8_t*)oam.data() });
+		memory.set_mapping(memory_region::oam, { 0xFF, (uint8_t*)oam.data(), (uint8_t*)oam.data() });
 
-		// registers
-		memory.set_mapping({ 0xFF40, 0xFF4B, [this](uint16_t address)->uint8_t { return on_register_read(address); }, [this](uint16_t address, uint8_t value) { on_register_write(address, value); } });
+		// ppu registers
+		memory.set_mapping(memory_region::ppu_registers, { 0x0F, [this](uint16_t address)->uint8_t { return on_register_read(address); }, [this](uint16_t address, uint8_t value) { on_register_write(address, value); } });
 	}
 
 	cycle_scheduler::awaitable_cycles ppu::cycles(cycle_scheduler::priority priority, uint32_t wait)
@@ -704,7 +704,7 @@ namespace coro_gb
 		if (trigger_stat || trigger_vblank)
 		{
 			// wake CPU if we just triggered an enabled interrupt
-			memory_mapper::interrupt_bits_t pending_interrupts = (memory.interrupt_flag & memory.interrupt_enable);
+			memory_map::interrupt_bits_t pending_interrupts = (memory.interrupt_flag & memory.interrupt_enable);
 			if ((pending_interrupts.u8 & 0x1F) != 0)
 			{
 				memory.interrupts.cpu_wake.trigger();
@@ -724,16 +724,16 @@ namespace coro_gb
 		case lcd_mode::power_off:
 		case lcd_mode::initial_power_on:
 		case lcd_mode::h_blank:
-			memory.set_mapping({ 0xFE00, 0xFEA0, (uint8_t*) oam.data(), (uint8_t*) oam.data() }); // restore access to oam
-			memory.set_mapping({ 0x8000, 0x9FFF, vram.data(), vram.data() });                     // restore access to vram
+			memory.set_mapping(memory_region::oam,  { 0xFF, (uint8_t*)oam.data(), (uint8_t*)oam.data() }); // restore access to oam
+			memory.set_mapping(memory_region::vram, { 0x1FFF, vram.data(), vram.data() });                 // restore access to vram
 			break;
 		case lcd_mode::v_blank:
 			break;
 		case lcd_mode::oam_search:
-			//memory.set_mapping({ 0xFE00, 0xFEA0, nullptr, nullptr }); // block access to oam
+			//memory.set_mapping(memory_region::oam, { 0xFF, nullptr, nullptr }); // block access to oam
 			break;
 		case lcd_mode::lcd_write:
-			//memory.set_mapping({ 0x8000, 0x9FFF, nullptr, nullptr }); // block access to vram
+			//memory.set_mapping(memory_region::vram, { 0x1FFF, nullptr, nullptr }); // block access to vram
 			break;
 		}
 		update_interrupt_flags(mode);
@@ -755,41 +755,40 @@ namespace coro_gb
 			interrupts.dma_trigger.reset();
 			co_await interrupts.dma_trigger;
 
-			uint8_t shadow_dma_start;
 			while (true)
 			{
 				try
 				{
+					// DMA transfers take 8 cycles to start, and then 640 cycles to transfer 160 bytes
 					co_await scheduler.cycles(cycle_scheduler::unit::dma, cycle_scheduler::priority::write, 8);
 
-					shadow_dma_start = registers.dma_start;
-					if (shadow_dma_start >= 0xE0)
-					{
-						// trying to DMA from 0xE000-0xFFFF will actually read from 0xC000-0xDFFF (wram mirroring)
-						// DMA'ing from 0xFE00 will actually read from 0xDE00 not OAM!
-						shadow_dma_start -= 0x20;
-					}
-
-					// block access to oam
-					memory.set_mapping({ 0xFE00, 0xFEA0, nullptr, nullptr });
+					// block access to OAM during the DMA transfer
+					memory.set_mapping(memory_region::oam, { 0xFF, nullptr, nullptr });
 
 					co_await scheduler.interruptible_cycles(interrupts.dma_trigger, cycle_scheduler::unit::dma, cycle_scheduler::priority::write, 640);
 					break;
 				}
 				catch (interrupted i)
 				{
+					// if a second write to the DMA register occurs during the DMA transfer,
+					// the transfer is restarted from the new address with the same timing as a new transfer
+					// and the OAM remains locked
 					continue;
 				}
 			}
 
 			// perform DMA copy
+			// we don't perform the copy in a cycle-by-cycle manner,
+			// as it shouldn't be observable outside DMA conflicts, which we don't support yet
 			for (uint8_t offset = 0; offset < 0xA0; ++offset)
 			{
-				((uint8_t*)&oam[0])[offset] = memory.read8(shadow_dma_start * 0x100 + offset);
+				// using read8_main directly because DMA can't read OAM or MMIO
+				// DMA'ing from 0xFE00 will actually mirror 0xDE00 in WRAM not OAM!
+				((uint8_t*)&oam[0])[offset] = memory.read8_main(registers.dma_start * 0x100 + offset);
 			}
 
-			// restore access to oam
-			memory.set_mapping({ 0xFE00, 0xFEA0, (uint8_t*)oam.data(), (uint8_t*)oam.data() });
+			// restore access to OAM after the transfer is complete
+			memory.set_mapping(memory_region::oam, { 0xFF, (uint8_t*)oam.data(), (uint8_t*)oam.data() });
 		};
 	}
 }

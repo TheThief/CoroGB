@@ -10,11 +10,11 @@
 
 namespace coro_gb
 {
-	struct memory_mapper;
+	struct memory_map;
 
 	struct ppu final
 	{
-		ppu(cycle_scheduler& scheduler, memory_mapper& memory);
+		ppu(cycle_scheduler& scheduler, memory_map& memory);
 
 		single_future<void> run();
 
@@ -124,7 +124,7 @@ namespace coro_gb
 		single_future<void> run_dma();
 
 		cycle_scheduler& scheduler;
-		memory_mapper& memory;
+		memory_map& memory;
 
 		std::function<void()> display_callback;
 

@@ -18,7 +18,7 @@ namespace coro_gb
 		load_ram(ram_path);
 	}
 
-	void cart::map(memory_mapper& in_memory_mapper)
+	void cart::map(memory_map& in_memory_map)
 	{
 		// most map()s are on a fresh load of the cart - only reset if we're being reused
 		[[unlikely]]
@@ -32,7 +32,7 @@ namespace coro_gb
 			mbc->ram = std::move(ram);
 			mbc->ram_path = std::move(ram_path);
 		}
-		mbc->map_to(in_memory_mapper);
+		mbc->map_to(in_memory_map);
 	}
 
 	void cart::unmap()
@@ -103,8 +103,8 @@ namespace coro_gb
 
 		// detect MMM01 cart like "Mani 4 in 1 - Takahashi Meijin no Bouken-jima II + GB Genjin + Bomber Boy + Milon no Meikyuu Kumikyoku", as those are bank 1FE on boot instead of 000
 		if (in_rom.size() >= 0x4'0000 && // 256 kB
-			(32*1024) << cartridge_size_code != in_rom.size() &&
-			(32 * 1024) << in_rom[in_rom.size() - 0x8000 + 0x0148] == in_rom.size() &&
+			(32uz * 1024) << cartridge_size_code != in_rom.size() &&
+			(32uz * 1024) << in_rom[in_rom.size() - 0x8000 + 0x0148] == in_rom.size() &&
 			std::equal(std::begin(nintendo_logo_data), std::end(nintendo_logo_data), &in_rom[in_rom.size() - 0x8000 + 0x0104]))
 		{
 			mbc = std::make_unique<mmm01>(std::move(in_rom));
@@ -190,18 +190,18 @@ namespace coro_gb
 		if (mapped_to)
 		{
 			unmap();
-			//throw std::runtime_error("please unmap cart from memory mapper before destroying it");
+			//throw std::runtime_error("please unmap cart from memory map before destroying it");
 		}
 	}
 
-	void cart::mbc_base::map_to(memory_mapper& in_memory_mapper)
+	void cart::mbc_base::map_to(memory_map& in_memory_map)
 	{
 		if (mapped_to)
 		{
 			save_ram();
-			throw std::runtime_error("please unmap cart from memory mapper before mapping to a new memory_mapper");
+			throw std::runtime_error("please unmap cart from memory map before mapping to a new memory_map");
 		}
-		mapped_to = &in_memory_mapper;
+		mapped_to = &in_memory_map;
 	}
 
 	void cart::mbc_base::unmap()
@@ -211,7 +211,7 @@ namespace coro_gb
 			save_ram();
 			mapped_to = nullptr;
 		}
-		// todo: we currently rely on memory mapper being destroyed after this - we don't actually remove the mapping
+		// todo: we currently rely on memory map being destroyed after this - we don't actually remove the mapping
 	}
 
 	void cart::mbc_base::load_ram(std::filesystem::path in_ram_path)
@@ -252,7 +252,7 @@ namespace coro_gb
 		if (ram.size() >= 0x2000) // banked ram - ram smaller than 8 kiB must be implemented in mbc
 		{
 			uint8_t* ram_data = ram.data() + ((ram_bank * 0x2000) % ram.size());
-			mapped_to->set_mapping({ 0xA000, 0xBFFF, ram_data, ram_data });
+			mapped_to->set_mapping(memory_region::sram, { 0x1FFF, ram_data, ram_data });
 		}
 	}
 
@@ -261,8 +261,7 @@ namespace coro_gb
 		[[likely]]
 		if (ram.size() > 0)
 		{
-			uint16_t mapping_end = 0xBFFF;
-			mapped_to->set_mapping({ 0xA000, mapping_end, nullptr, nullptr });
+			mapped_to->set_mapping(memory_region::sram, { 0x1FFF, nullptr, nullptr });
 		}
 	}
 
@@ -283,14 +282,15 @@ namespace coro_gb
 	{
 	}
 
-	void cart::null_mbc::map_to(memory_mapper& in_memory_mapper)
+	void cart::null_mbc::map_to(memory_map& in_memory_map)
 	{
-		mapped_to = &in_memory_mapper;
+		mapped_to = &in_memory_map;
 
-		mapped_to->set_mapping({ 0x0000, 0x7FFF, rom.data(), nullptr });
+		mapped_to->set_mapping(memory_region::rom0, { 0x7FFF, rom.data(), nullptr });
+		mapped_to->set_mapping(memory_region::rom1, { 0x7FFF, rom.data(), nullptr });
 		if (ram.size() > 0)
 		{
-			mapped_to->set_mapping({ 0xA000, (uint16_t)(0xA000 + std::min<size_t>(ram.size() - 1, 0x1FFF)), ram.data(), ram.data() });
+			mapped_to->set_mapping(memory_region::sram, { 0x1FFF, ram.data(), ram.data() });
 		}
 	}
 
@@ -317,11 +317,11 @@ namespace coro_gb
 		}
 	}
 
-	void cart::mbc1::map_to(memory_mapper& in_memory_mapper)
+	void cart::mbc1::map_to(memory_map& in_memory_map)
 	{
-		mbc_base::map_to(in_memory_mapper);
-		mapped_to->set_mapping({ 0x0000, 0x3FFF, rom.data(),          [this](uint16_t address, uint8_t value) { handle_write(address, value); } });
-		mapped_to->set_mapping({ 0x4000, 0x7FFF, rom.data() + 0x4000, [this](uint16_t address, uint8_t value) { handle_write(address, value); } }); // bank 1
+		mbc_base::map_to(in_memory_map);
+		mapped_to->set_mapping(memory_region::rom0, { 0x3FFF, rom.data(),          [this](uint16_t address, uint8_t value) { handle_write(address, value); } });
+		mapped_to->set_mapping(memory_region::rom1, { 0x3FFF, rom.data() + 0x4000, [this](uint16_t address, uint8_t value) { handle_write(address, value); } });
 	}
 
 	void cart::mbc1::handle_write(uint16_t address, uint8_t value)
@@ -374,7 +374,7 @@ namespace coro_gb
 			}
 
 			uint8_t* rom_data = rom.data() + ((rom_bank * 0x4000) % rom.size());
-			mapped_to->set_mapping({ 0x4000, 0x7FFF, rom_data, [this](uint16_t address, uint8_t value) { handle_write(address, value); } });
+			mapped_to->set_mapping(memory_region::rom1, { 0x3FFF, rom_data, [this](uint16_t address, uint8_t value) { handle_write(address, value); } });
 		}
 		else if (address <= 0x5FFF) // RAM Bank Number - and/or - Upper Bits of ROM Bank Number
 		{
@@ -395,13 +395,13 @@ namespace coro_gb
 			}
 
 			uint8_t* rom_data = rom.data() + ((rom_bank * 0x4000) % rom.size());
-			mapped_to->set_mapping({ 0x4000, 0x7FFF, rom_data, [this](uint16_t address, uint8_t value) { handle_write(address, value); } });
+			mapped_to->set_mapping(memory_region::rom1, { 0x3FFF, rom_data, [this](uint16_t address, uint8_t value) { handle_write(address, value); } });
 
 			if (banking_mode == 1)
 			{
 				// in banking mode 1 the "rom 0" area is banked to the "outer" bank number
 				uint8_t* rom0_data = rom.data() + ((adjusted_outer_rom_bank * 0x4000) % rom.size());
-				mapped_to->set_mapping({ 0x0000, 0x3FFF, rom0_data, [this](uint16_t address, uint8_t value) { handle_write(address, value); } });
+				mapped_to->set_mapping(memory_region::rom0, { 0x3FFF, rom0_data, [this](uint16_t address, uint8_t value) { handle_write(address, value); } });
 
 				// if ram is banked, update the ram banking
 				if (ram_enabled && ram.size() > 0x2000)
@@ -424,7 +424,7 @@ namespace coro_gb
 				if (banking_mode == 0)
 				{
 					// switch to mode 0 - range 0x0000-0x3FFF and ram is unbanked
-					mapped_to->set_mapping({ 0x0000, 0x3FFF, rom.data(), [this](uint16_t address, uint8_t value) { handle_write(address, value); } });
+					mapped_to->set_mapping(memory_region::rom0, { 0x3FFF, rom.data(), [this](uint16_t address, uint8_t value) { handle_write(address, value); } });
 					if (ram_enabled && ram.size() > 0x2000 && ram_bank != 0) // don't need to update the ram banking if the ram is not banked or we're already on bank 0!
 					{
 						map_ram(0);
@@ -437,7 +437,7 @@ namespace coro_gb
 					// in banking mode 1 the "rom 0" area is banked to the "outer" bank number
 					const uint8_t adjusted_outer_rom_bank = ram_bank << (!multicart_1MB ? 5 : 4);
 					uint8_t* rom0_data = rom.data() + ((adjusted_outer_rom_bank * 0x4000) % rom.size());
-					mapped_to->set_mapping({ 0x0000, 0x3FFF, rom0_data, [this](uint16_t address, uint8_t value) { handle_write(address, value); } });
+					mapped_to->set_mapping(memory_region::rom0, { 0x3FFF, rom0_data, [this](uint16_t address, uint8_t value) { handle_write(address, value); } });
 
 					if (ram_enabled && ram.size() > 0x2000) // don't need to update the ram banking if the ram is not banked!
 					{
@@ -455,11 +455,11 @@ namespace coro_gb
 	{
 	}
 
-	void cart::mbc2::map_to(memory_mapper& in_memory_mapper)
+	void cart::mbc2::map_to(memory_map& in_memory_map)
 	{
-		mbc_base::map_to(in_memory_mapper);
-		mapped_to->set_mapping({ 0x0000, 0x3FFF, rom.data(),          [this](uint16_t address, uint8_t value) { handle_write(address, value); } });
-		mapped_to->set_mapping({ 0x4000, 0x7FFF, rom.data() + 0x4000, nullptr }); // bank 1
+		mbc_base::map_to(in_memory_map);
+		mapped_to->set_mapping(memory_region::rom0, { 0x3FFF, rom.data(),          [this](uint16_t address, uint8_t value) { handle_write(address, value); } });
+		mapped_to->set_mapping(memory_region::rom1, { 0x3FFF, rom.data() + 0x4000, nullptr });
 	}
 
 	void cart::mbc2::handle_write(uint16_t address, uint8_t value)
@@ -490,14 +490,14 @@ namespace coro_gb
 			value = std::max(value & 0x0F, 0x01);
 			rom_bank = (rom_bank & 0xF0) | value;
 			uint8_t* rom_data = rom.data() + ((rom_bank * 0x4000) % rom.size());
-			mapped_to->set_mapping({ 0x4000, 0x7FFF, rom_data, nullptr });
+			mapped_to->set_mapping(memory_region::rom1, { 0x3FFF, rom_data, nullptr });
 		}
 	}
 
 	void cart::mbc2::map_ram()
 	{
 		uint8_t* ram_data = ram.data();
-		mapped_to->set_mapping({ 0xA000, 0xBFFF, [this](uint16_t address)->uint8_t { return handle_ram_read(address); }, [this](uint16_t address, uint8_t value) { handle_ram_write(address, value); } });
+		mapped_to->set_mapping(memory_region::sram, { 0x1FF, [this](uint16_t address)->uint8_t { return handle_ram_read(address); }, [this](uint16_t address, uint8_t value) { handle_ram_write(address, value); } });
 	}
 
 	uint8_t cart::mbc2::handle_ram_read(uint16_t address)
@@ -539,11 +539,11 @@ namespace coro_gb
 		}
 	}
 
-	void cart::mbc3::map_to(memory_mapper& in_memory_mapper)
+	void cart::mbc3::map_to(memory_map& in_memory_map)
 	{
-		mbc_base::map_to(in_memory_mapper);
-		mapped_to->set_mapping({ 0x0000, 0x3FFF, rom.data(),          [this](uint16_t address, uint8_t value) { handle_write(address, value); } });
-		mapped_to->set_mapping({ 0x4000, 0x7FFF, rom.data() + 0x4000, [this](uint16_t address, uint8_t value) { handle_write(address, value); } }); // bank 1
+		mbc_base::map_to(in_memory_map);
+		mapped_to->set_mapping(memory_region::rom0, { 0x3FFF, rom.data(),          [this](uint16_t address, uint8_t value) { handle_write(address, value); } });
+		mapped_to->set_mapping(memory_region::rom1, { 0x3FFF, rom.data() + 0x4000, [this](uint16_t address, uint8_t value) { handle_write(address, value); } });
 	}
 
 	void cart::mbc3::handle_write(uint16_t address, uint8_t value)
@@ -576,7 +576,7 @@ namespace coro_gb
 			if (!multicart)
 			{
 				uint8_t* rom_data = rom.data() + ((rom_bank * 0x4000) % rom.size());
-				mapped_to->set_mapping({ 0x4000, 0x7FFF, rom_data, [this](uint16_t address, uint8_t value) { handle_write(address, value); } });
+				mapped_to->set_mapping(memory_region::rom1, { 0x3FFF, rom_data, [this](uint16_t address, uint8_t value) { handle_write(address, value); } });
 			}
 		}
 		else if (address <= 0x5FFF) // RAM Bank Number - or - RTC Register Select
@@ -610,10 +610,10 @@ namespace coro_gb
 			else
 			{
 				uint8_t* rom0_data = rom.data() + (((ram_bank << 1) * 0x4000) % rom.size());
-				mapped_to->set_mapping({ 0x0000, 0x3FFF, rom0_data, [this](uint16_t address, uint8_t value) { handle_write(address, value); } });
+				mapped_to->set_mapping(memory_region::rom0, { 0x3FFF, rom0_data, [this](uint16_t address, uint8_t value) { handle_write(address, value); } });
 
 				uint8_t* rom_data = rom.data() + (((ram_bank << 1 | 0x1) * 0x4000) % rom.size());
-				mapped_to->set_mapping({ 0x4000, 0x7FFF, rom_data, [this](uint16_t address, uint8_t value) { handle_write(address, value); } });
+				mapped_to->set_mapping(memory_region::rom1, { 0x3FFF, rom_data, [this](uint16_t address, uint8_t value) { handle_write(address, value); } });
 			}
 		}
 		else if (address <= 0x7FFF) // Latch Clock Data
@@ -655,11 +655,11 @@ namespace coro_gb
 	{
 	}
 
-	void cart::mbc5::map_to(memory_mapper& in_memory_mapper)
+	void cart::mbc5::map_to(memory_map& in_memory_map)
 	{
-		mbc_base::map_to(in_memory_mapper);
-		mapped_to->set_mapping({ 0x0000, 0x3FFF, rom.data(),          [this](uint16_t address, uint8_t value) { handle_write(address, value); } });
-		mapped_to->set_mapping({ 0x4000, 0x7FFF, rom.data() + 0x4000, [this](uint16_t address, uint8_t value) { handle_write(address, value); } }); // bank 1
+		mbc_base::map_to(in_memory_map);
+		mapped_to->set_mapping(memory_region::rom0, { 0x3FFF, rom.data(),          [this](uint16_t address, uint8_t value) { handle_write(address, value); } });
+		mapped_to->set_mapping(memory_region::rom1, { 0x3FFF, rom.data() + 0x4000, [this](uint16_t address, uint8_t value) { handle_write(address, value); } });
 	}
 
 	void cart::mbc5::handle_write(uint16_t address, uint8_t value)
@@ -687,7 +687,7 @@ namespace coro_gb
 			// The lower 8 bits of the ROM bank number goes here. Writing 0 will indeed give bank 0 on MBC5, unlike other MBCs.
 			rom_bank = (rom_bank & 0x100) | value;
 			uint8_t* rom_data = rom.data() + ((rom_bank * 0x4000) % rom.size());
-			mapped_to->set_mapping({ 0x4000, 0x7FFF, rom_data, nullptr });
+			mapped_to->set_mapping(memory_region::rom1, { 0x3FFF, rom_data, nullptr });
 		}
 		else if (address <= 0x3FFF) // High bit of ROM Bank Number
 		{
@@ -695,7 +695,7 @@ namespace coro_gb
 			value = value & 0x01;
 			rom_bank = ((uint16_t)value << 8) | (rom_bank & 0xFF);
 			uint8_t* rom_data = rom.data() + ((rom_bank * 0x4000) % rom.size());
-			mapped_to->set_mapping({ 0x4000, 0x7FFF, rom_data, nullptr });
+			mapped_to->set_mapping(memory_region::rom1, { 0x3FFF, rom_data, nullptr });
 		}
 		else if (address <= 0x5FFF) // RAM Bank Number
 		{
@@ -720,13 +720,13 @@ namespace coro_gb
 		ram.resize(ram_size);
 	}
 
-	void cart::mmm01::map_to(memory_mapper& in_memory_mapper)
+	void cart::mmm01::map_to(memory_map& in_memory_map)
 	{
-		mbc_base::map_to(in_memory_mapper);
+		mbc_base::map_to(in_memory_map);
 
 		// starts up in "unmapped" mode, which forces bank 0x1FE
-		mapped_to->set_mapping({ 0x0000, 0x3FFF, rom.data() + (0x1FE * 0x4000) % rom.size(), [this](uint16_t address, uint8_t value) { handle_write(address, value); } });
-		mapped_to->set_mapping({ 0x4000, 0x7FFF, rom.data() + (0x1FF * 0x4000) % rom.size(), [this](uint16_t address, uint8_t value) { handle_write(address, value); } }); // bank 1
+		mapped_to->set_mapping(memory_region::rom0, { 0x3FFF, rom.data() + (0x1FE * 0x4000) % rom.size(), [this](uint16_t address, uint8_t value) { handle_write(address, value); } });
+		mapped_to->set_mapping(memory_region::rom1, { 0x3FFF, rom.data() + (0x1FF * 0x4000) % rom.size(), [this](uint16_t address, uint8_t value) { handle_write(address, value); } });
 	}
 
 	void cart::mmm01::handle_write(uint16_t address, uint8_t value)
@@ -778,8 +778,8 @@ namespace coro_gb
 						rom1_bank.rom_bank_low |= 1;
 					}
 
-					mapped_to->set_mapping({ 0x0000, 0x3FFF, rom.data() + (rom0_bank.value * 0x4000) % rom.size(), [this](uint16_t address, uint8_t value) { handle_write(address, value); } });
-					mapped_to->set_mapping({ 0x4000, 0x7FFF, rom.data() + (rom1_bank.value * 0x4000) % rom.size(), [this](uint16_t address, uint8_t value) { handle_write(address, value); } });
+					mapped_to->set_mapping(memory_region::rom0, { 0x3FFF, rom.data() + (rom0_bank.value * 0x4000) % rom.size(), [this](uint16_t address, uint8_t value) { handle_write(address, value); } });
+					mapped_to->set_mapping(memory_region::rom1, { 0x3FFF, rom.data() + (rom1_bank.value * 0x4000) % rom.size(), [this](uint16_t address, uint8_t value) { handle_write(address, value); } });
 				}
 			}
 		}
@@ -823,7 +823,7 @@ namespace coro_gb
 				rom1_bank.value |= ~1;
 			}
 
-			mapped_to->set_mapping({ 0x4000, 0x7FFF, rom.data() + (rom1_bank.value * 0x4000) % rom.size(), [this](uint16_t address, uint8_t value) { handle_write(address, value); } });
+			mapped_to->set_mapping(memory_region::rom1, { 0x3FFF, rom.data() + (rom1_bank.value * 0x4000) % rom.size(), [this](uint16_t address, uint8_t value) { handle_write(address, value); } });
 		}
 		else if (address <= 0x5FFF) // RAM Bank Number - and/or - Upper Bits of ROM Bank Number
 		{
@@ -869,7 +869,7 @@ namespace coro_gb
 					rom_bank_t rom0_bank = rom_bank;
 					rom0_bank.rom_bank_low = (rom0_bank.rom_bank_low & rom_bank_nwrite_enable);
 
-					mapped_to->set_mapping({ 0x0000, 0x3FFF, rom.data() + (rom0_bank.value * 0x4000) % rom.size(), [this](uint16_t address, uint8_t value) { handle_write(address, value); } });
+					mapped_to->set_mapping(memory_region::rom0, { 0x3FFF, rom.data() + (rom0_bank.value * 0x4000) % rom.size(), [this](uint16_t address, uint8_t value) { handle_write(address, value); } });
 				}
 
 				rom_bank_t rom1_bank = rom_bank;
@@ -878,7 +878,7 @@ namespace coro_gb
 					rom1_bank.rom_bank_low |= 1;
 				}
 
-				mapped_to->set_mapping({ 0x4000, 0x7FFF, rom.data() + (rom1_bank.value * 0x4000) % rom.size(), [this](uint16_t address, uint8_t value) { handle_write(address, value); } });
+				mapped_to->set_mapping(memory_region::rom1, { 0x3FFF, rom.data() + (rom1_bank.value * 0x4000) % rom.size(), [this](uint16_t address, uint8_t value) { handle_write(address, value); } });
 			}
 		}
 		else if (address <= 0x7FFF) // ROM / RAM Banking Mode Select
@@ -906,7 +906,7 @@ namespace coro_gb
 							{
 								rom0_bank.rom_bank_mid = 0;
 							}
-							mapped_to->set_mapping({ 0x0000, 0x3FFF, rom.data() + (rom0_bank.value * 0x4000) % rom.size(), [this](uint16_t address, uint8_t value) { handle_write(address, value); } });
+							mapped_to->set_mapping(memory_region::rom0, { 0x3FFF, rom.data() + (rom0_bank.value * 0x4000) % rom.size(), [this](uint16_t address, uint8_t value) { handle_write(address, value); } });
 						}
 					}
 					else

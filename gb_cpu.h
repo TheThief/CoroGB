@@ -16,7 +16,7 @@ namespace coro_gb
 		fail,
 	};
 
-	struct memory_mapper;
+	struct memory_map;
 
 	struct registers_t final
 	{
@@ -73,7 +73,7 @@ namespace coro_gb
 
 	struct cpu final
 	{
-		cpu(cycle_scheduler& scheduler, memory_mapper& memory);
+		cpu(cycle_scheduler& scheduler, memory_map& memory);
 
 		single_future<test_status> run();
 		test_status get_mooneye_result() const;
@@ -81,7 +81,7 @@ namespace coro_gb
 	protected:
 		registers_t registers;
 		cycle_scheduler& scheduler;
-		memory_mapper& memory;
+		memory_map& memory;
 		int32_t additional_cycles = 0;
 
 		cycle_scheduler::awaitable_cycles cycles(cycle_scheduler::priority priority, uint32_t wait);

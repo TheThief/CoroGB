@@ -1,6 +1,6 @@
 #include "gb_cpu.h"
 #include "gb_cycle_scheduler.h"
-#include "gb_memory_mapper.h"
+#include "gb_memory_map.h"
 #include "single_future.h"
 
 #include <cassert>
@@ -8,7 +8,7 @@
 
 namespace coro_gb
 {
-	cpu::cpu(cycle_scheduler& scheduler, memory_mapper& memory)
+	cpu::cpu(cycle_scheduler& scheduler, memory_map& memory)
 		: scheduler(scheduler),
 		memory(memory)
 	{
@@ -315,7 +315,7 @@ namespace coro_gb
 				// interrupts are checked on the 3rd T-cycle (2) of the last M-cycle of the prior instruction
 				co_await cycles(cycle_scheduler::priority::read, 2);
 
-				memory_mapper::interrupt_bits_t triggered_interrupts = (memory.interrupt_flag & memory.interrupt_enable);
+				memory_map::interrupt_bits_t triggered_interrupts = (memory.interrupt_flag & memory.interrupt_enable);
 				if ((triggered_interrupts.u8 & 0x1F) != 0)
 				{
 					registers.enable_interrupts = false;
@@ -795,7 +795,7 @@ namespace coro_gb
 					{
 						registers.enable_interrupts = registers.enable_interrupts_delay;
 
-						memory_mapper::interrupt_bits_t pending_interrupts = (memory.interrupt_flag & memory.interrupt_enable);
+						memory_map::interrupt_bits_t pending_interrupts = (memory.interrupt_flag & memory.interrupt_enable);
 						if ((pending_interrupts.u8 & 0x1F) == 0)
 						{
 							uint64_t halt_start_cycles = scheduler.get_cycle_counter();

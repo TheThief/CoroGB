@@ -95,7 +95,7 @@
     <ClInclude Include="gb_cycle_scheduler.h" />
     <ClInclude Include="gb_ppu.h" />
     <ClInclude Include="gb_interrupt.h" />
-    <ClInclude Include="gb_memory_mapper.h" />
+    <ClInclude Include="gb_memory_map.h" />
     <ClInclude Include="resource.h" />
     <ClInclude Include="single_future.h" />
     <ClInclude Include="utils.h" />
@@ -107,7 +107,7 @@
     <ClInclude Include="gb_emu.h" />
     <ClCompile Include="gb_emu.cpp" />
     <ClCompile Include="gb_ppu.cpp" />
-    <ClCompile Include="gb_memory_mapper.cpp" />
+    <ClCompile Include="gb_memory_map.cpp" />
     <ClCompile Include="windows.cpp" />
   </ItemGroup>
   <ItemGroup>

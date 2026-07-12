@@ -29,7 +29,7 @@
     <ClInclude Include="gb_emu.h">
       <Filter>Headers</Filter>
     </ClInclude>
-    <ClInclude Include="gb_memory_mapper.h">
+    <ClInclude Include="gb_memory_map.h">
       <Filter>Headers</Filter>
     </ClInclude>
     <ClInclude Include="gb_interrupt.h">
@@ -65,7 +65,7 @@
     <ClCompile Include="gb_cpu.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="gb_memory_mapper.cpp">
+    <ClCompile Include="gb_memory_map.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="gb_cycle_scheduler.cpp">

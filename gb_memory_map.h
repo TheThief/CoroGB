@@ -13,47 +13,58 @@ namespace coro_gb
 {
 	struct cycle_scheduler;
 
-	struct memory_mapper final
+	enum class memory_region
+	{
+		rom0,          // 0x0000-0x3FFF
+		rom1,          // 0x4000-0x7FFF
+		vram,          // 0x8000-0x9FFF
+		sram,          // 0xA000-0xBFFF
+		wram0,         // 0xC000-0xCFFF 0xE000-0xEFFF
+		wram1,         // 0xD000-0xDFFF 0xF000-0xFDFF
+		oam,           // 0xFE00-FEA0
+		ppu_registers, // 0xFF40-4B
+
+		num_regions,
+	};
+
+	struct memory_map final
 	{
 	protected:
 		cycle_scheduler& scheduler;
 
 	public:
-		memory_mapper(cycle_scheduler& scheduler);
+		memory_map(cycle_scheduler& scheduler);
 
 		uint8_t read8(uint16_t address) const;
+		uint8_t read8_main(uint16_t address) const;
+		uint8_t read8_mmio(uint8_t mmio_address) const;
 		void write8(uint16_t address, uint8_t u8);
+		void write8_main(uint16_t address, uint8_t u8);
+		void write8_mmio(uint8_t mmio_address, uint8_t u8);
 
 		void load_boot_rom(std::filesystem::path boot_rom_path);
 
-	public:
 		void input(button_id button, button_state state);
 
 		struct mapping
 		{
-			uint16_t start_address;
-			uint16_t end_address; // inclusive
-			std::variant<uint8_t*, std::function<uint8_t(uint16_t)>> read;
-			std::variant<uint8_t*, std::function<void(uint16_t, uint8_t)>> write;
-
-			friend bool operator<(const mapping& lhs, const mapping& rhs)
-			{
-				return std::tie(lhs.start_address, lhs.end_address) < std::tie(rhs.start_address, rhs.end_address);
-			}
+			uint16_t mask = 0;
+			std::variant<uint8_t*, std::function<uint8_t(uint16_t)>> read = nullptr;
+			std::variant<uint8_t*, std::function<void(uint16_t, uint8_t)>> write = nullptr;
 		};
-	protected:
-		std::vector<mapping> mappings;
-	public:
-		void set_mapping(mapping new_mapping);
-		void remove_mapping(mapping new_mapping);
-	protected:
-		const mapping* find_mapping(uint16_t address) const;
+		void set_mapping(memory_region region, mapping new_mapping);
 
-		// 0x0000 - 0x3FFF: Permanently - mapped ROM bank
+	protected:
+		uint8_t read8_mapping(memory_region region, uint16_t address) const;
+		void write8_mapping(memory_region region, uint16_t address, uint8_t u8);
+
+		std::array<mapping, (size_t)(memory_region::num_regions)> mappings;
+
+		// 0x0000 - 0x3FFF: Permanently - mapped ROM bank 0
 		// 0x4000 - 0x7FFF: Area for switchable ROM banks
 		// 0x8000 - 0x9FFF: Video RAM
 		// 0xA000 - 0xBFFF: Area for switchable external RAM banks
-		// 0xC000 - 0xDFFF: Game Boy’s working RAM bank 0 / 1
+		// 0xC000 - 0xDFFF: Game Boy's working RAM bank 0 / 1
 		// 0xE000 - 0xFDFF: Mirror of WRAM
 		// 0xFE00 - 0xFEA0: Sprite Attribute Table
 		// 0xFF00 - 0xFF7F: Memory-mapped registers
@@ -62,10 +73,10 @@ namespace coro_gb
 		// 0xFFFF : Interrupt Enable Register
 
 		std::vector<uint8_t> boot_rom; // mapped at 0x0000 (over cartridge rom) until boot is complete
-		std::array<uint8_t, 8192> wram;
+		std::vector<uint8_t> wram = std::vector<uint8_t>(8192, 0);
 
 	public:
-		// 0xFF00 - 0xFF7F: Devices’ Mappings.Used to access I / O devices.
+		// 0xFF00 - 0xFF7F: Devices' Mappings.Used to access I / O devices.
 
 		// 0xFF00 - P1/JOYP - Joypad
 		union joypad_t
@@ -176,7 +187,7 @@ namespace coro_gb
 		// 0xFFFF : Interrupt Enable Register.
 		interrupt_bits_t interrupt_enable;
 
-		uint32_t timer_div_reset = 0;
+		uint64_t timer_div_reset = 0;
 
 		button_state buttons[8] = { button_state::up, button_state::up, button_state::up, button_state::up, button_state::up, button_state::up, button_state::up, button_state::up };
 

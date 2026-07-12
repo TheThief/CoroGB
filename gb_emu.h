@@ -4,7 +4,7 @@
 #include "gb_ppu.h"
 #include "gb_buttons.h"
 #include "gb_cycle_scheduler.h"
-#include "gb_memory_mapper.h"
+#include "gb_memory_map.h"
 #include "single_future.h"
 #include "gb_cart.h"
 
@@ -52,7 +52,7 @@ namespace coro_gb
 
 	protected:
 		cycle_scheduler scheduler;
-		memory_mapper memory_mapper;
+		memory_map memory_map;
 		cpu cpu;
 		ppu ppu;
 		std::array<std::array<uint32_t, 4>, 3> palette;
@@ -62,9 +62,9 @@ namespace coro_gb
 	};
 
 	inline emu::emu()
-		: memory_mapper{ scheduler }
-		, cpu{ scheduler, memory_mapper }
-		, ppu{ scheduler, memory_mapper }
+		: memory_map{ scheduler }
+		, cpu{ scheduler, memory_map }
+		, ppu{ scheduler, memory_map }
 	{
 		select_palette(palette_preset::green);
 	}
@@ -91,13 +91,13 @@ namespace coro_gb
 
 	inline void emu::load_boot_rom(std::filesystem::path boot_rom_path)
 	{
-		memory_mapper.load_boot_rom(std::move(boot_rom_path));
+		memory_map.load_boot_rom(std::move(boot_rom_path));
 	}
 
 	inline void emu::load_cart(cart& in_cart)
 	{
 		loaded_cart = &in_cart;
-		in_cart.map(memory_mapper);
+		in_cart.map(memory_map);
 	}
 
 	inline uint32_t emu::get_cycle_counter() const
@@ -143,7 +143,7 @@ namespace coro_gb
 
 	inline void emu::input(button_id button, button_state state)
 	{
-		memory_mapper.input(button, state);
-		memory_mapper.interrupts.cpu_wake.trigger();
+		memory_map.input(button, state);
+		memory_map.interrupts.cpu_wake.trigger();
 	}
 }
